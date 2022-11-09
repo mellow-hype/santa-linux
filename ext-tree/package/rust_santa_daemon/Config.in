@@ -1,0 +1,7 @@
+config BR2_PACKAGE_RUST_SANTA_DAEMON
+    bool "rust_santa_daemon"
+    depends on BR2_PACKAGE_HOST_RUSTC_ARCH_SUPPORTS
+    select BR2_PACKAGE_HOST_RUSTC
+    select BR2_PACKAGE_HOST_CARGO
+    help
+        rust version of the Santa daemon package.

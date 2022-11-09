@@ -1,0 +1,5 @@
+config BR2_PACKAGE_SANTA_KMOD
+        bool "santa_kmod"
+        depends on BR2_LINUX_KERNEL
+        help
+                Santa clone kernel module component.

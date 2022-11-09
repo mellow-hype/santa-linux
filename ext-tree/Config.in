@@ -1,0 +1,4 @@
+menu "Santa Clone"
+    source "$BR2_EXTERNAL_SANTA_CLONE_PATH/package/santa_kmod/Config.in"
+    source "$BR2_EXTERNAL_SANTA_CLONE_PATH/package/rust_santa_daemon/Config.in"
+endmenu

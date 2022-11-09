@@ -1,0 +1,9 @@
+image/
+br22-out/
+buildroot-2022.08/
+
+# Object files
+**/*.o
+**/*.ko
+**/*.obj
+**/*.elf

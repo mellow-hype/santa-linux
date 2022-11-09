@@ -1,0 +1,25 @@
+[package]
+name = "santa-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "libsanta"
+path = "src/libsanta/lib.rs"
+
+[[bin]]
+name = "santa-daemon"
+path = "src/santa-daemon/main.rs"
+
+[[bin]]
+name = "santactl"
+path = "src/santactl/main.rs"
+
+[dependencies]
+nix = "0.25.0"
+serde_json = "1.0.87"
+neli = "0.6.3"
+sha2 = "0.10.6"
+daemonize = "0.4.1"
+serde = { version = "1.0", features = ["derive", "std"] }
+clap = { version = "4.0", features = ["derive"] }
