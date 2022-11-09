@@ -14,7 +14,7 @@ fn cache_insert_to_capacity() {
     for _ in 1..capacity {
         cache.insert(sig.to_string(), hashy.to_string());
         // mutate the signature so we have unique sigs on each iteration
-        sig.filepath = String::from(format!("{}xxx", sig.to_string()));
+        sig.created = sig.created + 1;
     }
     assert_eq!(cache.buffer.len(), capacity-1);
 }
@@ -40,13 +40,14 @@ fn cache_capacity_is_maintained() {
 /// SantaCacheSignature
 #[derive(Clone, Eq, PartialEq)]
 pub struct CacheSignature {
-    pub filepath: String,
+    // pub filepath: String,
     pub inode: u64,
     pub last_mod: u64,
+    pub created: u64,
 }
 impl CacheSignature {
     pub fn to_string(&self) -> String {
-        let uniq_sig = format!("{}||{}||{}",self.last_mod, self.inode, self.filepath);
+        let uniq_sig = format!("{}||{}||{}",self.last_mod, self.inode, self.created);
         String::from(&uniq_sig)
     }
 }
@@ -62,13 +63,19 @@ impl CacheSignature {
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("should be able to get duration")
             .as_secs();
+        // created
+        let created = meta.created()
+            .expect("should be on a unix system")
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("should be able to get duration")
+            .as_secs();
         // inode
         let inode = meta.st_ino();
 
         CacheSignature {
-            filepath: String::from(filepath),
             inode,
             last_mod,
+            created,
         }
     }
 }
@@ -96,7 +103,7 @@ impl SantaCache {
         SantaCache {
             buffer: HashMap::new(),
             keyvec: VecDeque::with_capacity(capacity),
-            capacity: capacity,
+            capacity,
         }
     }
 
@@ -112,19 +119,20 @@ impl SantaCache {
     /// Insert an item into the cache, taking care of managing the queue and removing entries as
     /// needed.
     pub fn insert(&mut self, sig: String, hash: String) {
-         // push the signature onto the keyvec.
-         self.keyvec.push_back(sig.clone());
+        // println!("Inserting into cache: {sig}");
+        // push the signature onto the keyvec.
+        self.keyvec.push_back(sig.clone());
 
-         // insert the entry onto the hashmap
-         *self.buffer.entry(sig.clone()).or_insert(hash.clone()) += &hash;
+        // insert the entry onto the hashmap
+        *self.buffer.entry(sig.clone()).or_insert(hash.clone()) += &hash;
 
-         // we have to know whether we need to remove entries
-         if self.keyvec.len() == self.capacity {
-              // pop the oldest signature from the front of the queue
-              let remove_key = self.keyvec.pop_front().unwrap_or(String::new());
+        // we have to know whether we need to remove entries
+        if self.keyvec.len() == self.capacity {
+            // pop the oldest signature from the front of the queue
+            let remove_key = self.keyvec.pop_front().unwrap_or(String::new());
 
-              // now we use the key we popped from the keyvec to remove the hashmap entry
-              self.buffer.remove(&remove_key);
+            // now we use the key we popped from the keyvec to remove the hashmap entry
+            self.buffer.remove(&remove_key);
         }
     }
 }
