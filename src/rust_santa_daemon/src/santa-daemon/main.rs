@@ -8,13 +8,14 @@ use daemonize::Daemonize;
 // arg parsing support
 use clap::Parser;
 // json serde
-use serde_json::json;
+// use serde_json::json;
 
 // Local imports
-use libsanta::{SANTAD_NAME, STATUS_CMD, SantaMode};
+use libsanta::{SANTAD_NAME, XPC_CLIENT_PATH, STATUS_CMD, SantaMode};
 use libsanta::netlink::{NlSantaCommand, NlSantaAttribute};
 use libsanta::daemon::SantaDaemon;
 use libsanta::engine::PolicyEngineStatus;
+use libsanta::uxpc::SantaXpcClient;
 
 /// Cli argument parser via clap
 #[derive(Parser)]
@@ -55,19 +56,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // do stuff forever
     loop {
-        // Check for messages on the xpc socket
-        if let Some(data) = daemon.xpc_rx.recv() {
-            match &data[..] {
-                STATUS_CMD => {
-                    println!("{SANTAD_NAME}: got status command from santactl");
-                    let status: PolicyEngineStatus = daemon.engine.get_status();
-                    let status_json = json!(status);
-                    println!("{SANTAD_NAME}: serialized status: {}", status_json);
-                },
-                _ => {},
-            };
-        };
-
         // Check for messages from the kernel on the netlink socket
         if let Some(nlmsg) = daemon.netlink.recv() {
             // we got a request, parse the payload
@@ -100,5 +88,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                  eprintln!("{SANTAD_NAME}: Failed to read paylod from generic netlink message");
             }
         };
+        // Check for messages on the xpc socket
+        if let Some(data) = daemon.xpc_rx.recv() {
+            match &data[..] {
+                STATUS_CMD => {
+                    let status: PolicyEngineStatus = daemon.engine.get_status();
+                    let status_json = serde_json::to_string_pretty(&status)
+                        .expect("should be able to pretty print json string");
+                    let mut xclient = SantaXpcClient::new(String::from(XPC_CLIENT_PATH));
+                    xclient.send(status_json.as_bytes()).expect("daemon sent message to client");
+                },
+                _ => {},
+            };
+        };
+
     };
 }

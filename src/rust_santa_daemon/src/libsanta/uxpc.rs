@@ -47,6 +47,47 @@ impl SantaXpcServer {
     }
 }
 
+pub struct SantaXpcCtlServer {
+    rx: UnixListener,
+}
+/// A server-side Unix socket
+impl SantaXpcCtlServer {
+    pub fn new(path: String, nonblocking: bool) -> SantaXpcCtlServer {
+        // set up the socket for receiving commands
+        let rx_sockpath = Path::new(&path);
+        // delete old socket if it exists
+        if rx_sockpath.exists() {
+            std::fs::remove_file(rx_sockpath).expect("should be able to delete file");
+        }
+        // bind the rx socket
+        let rx = match UnixListener::bind(rx_sockpath) {
+            Err(_) => panic!("failed to bind santactl xpc listener socket"),
+            Ok(socket) => socket,
+        };
+        // set the socket to non-blocking
+        rx.set_nonblocking(nonblocking).expect("Couldn't set xpc socket to non-blocking");
+
+        SantaXpcCtlServer {rx}
+    }
+
+    // the socket should be non-blocking so we'll either get a connection
+    // or move on and try again on the next iteration
+    pub fn recv(&self) -> Option<String> {
+        if let Ok((mut client, _)) = self.rx.accept() {
+            let mut data = String::new();
+            match client.read_to_string(&mut data) {
+                Ok(_) => return Some(data),
+                Err(_) => {
+                    eprintln!("failed to parse message to string");
+                    return None
+                }
+            }
+        } else {
+            None
+        }
+    }
+}
+
 /// XPC Client Socket
 pub struct SantaXpcClient {
     tx: UnixStream, // where we send messages

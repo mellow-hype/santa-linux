@@ -20,6 +20,7 @@ nix = "0.25.0"
 serde_json = "1.0.87"
 neli = "0.6.3"
 sha2 = "0.10.6"
+fork = "0.1.20"
 daemonize = "0.4.1"
 serde = { version = "1.0", features = ["derive", "std"] }
 clap = { version = "4.0", features = ["derive"] }
