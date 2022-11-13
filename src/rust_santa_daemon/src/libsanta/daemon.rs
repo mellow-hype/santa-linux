@@ -23,7 +23,7 @@ impl SantaDaemon {
         let mut daemon = SantaDaemon {
             netlink: NetlinkAgentGeneric::new(Some(0), &[]),
             engine: PolicyEngine::new(mode, 1000),
-            xpc_rx: SantaXpcServer::new(String::from(XPC_SOCKET_PATH)),
+            xpc_rx: SantaXpcServer::new(String::from(XPC_SOCKET_PATH), true),
         };
         daemon.init();
         daemon

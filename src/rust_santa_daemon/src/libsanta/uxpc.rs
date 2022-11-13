@@ -4,14 +4,12 @@ use std::io::prelude::*;
 use std::io::{Error, ErrorKind};
 use std::path::Path;
 
-/// XPC Server Socket
+/// A server-side Unix socket
 pub struct SantaXpcServer {
     rx: UnixListener,
 }
-
-/// A server-side Unix socket
 impl SantaXpcServer {
-    pub fn new(path: String) -> SantaXpcServer {
+    pub fn new(path: String, nonblocking: bool) -> SantaXpcServer {
         // set up the socket for receiving commands
         let rx_sockpath = Path::new(&path);
         // delete old socket if it exists
@@ -20,11 +18,11 @@ impl SantaXpcServer {
         }
         // bind the rx socket
         let rx = match UnixListener::bind(rx_sockpath) {
-            Err(_) => panic!("failed to bind server xpc socket"),
+            Err(_) => panic!("failed to bind santactl xpc listener socket: {path}"),
             Ok(socket) => socket,
         };
         // set the socket to non-blocking
-        rx.set_nonblocking(true).expect("Couldn't set xpc socket to non-blocking");
+        rx.set_nonblocking(nonblocking).expect("Couldn't set xpc socket to non-blocking");
 
         SantaXpcServer {rx}
     }
@@ -47,12 +45,11 @@ impl SantaXpcServer {
     }
 }
 
-/// XPC Client Socket
+/// A client-side Unix socket
 pub struct SantaXpcClient {
     tx: UnixStream, // where we send messages
 }
 
-/// A client-side Unix socket
 impl SantaXpcClient {
     pub fn new(path: String) -> SantaXpcClient {
         // set up the socket connection for sending responses?

@@ -124,7 +124,7 @@ impl SantaCache {
         self.keyvec.push_back(sig.clone());
 
         // insert the entry onto the hashmap
-        *self.buffer.entry(sig.clone()).or_insert(hash.clone()) += &hash;
+        self.buffer.entry(sig.clone()).or_insert_with(|| hash.clone());
 
         // we have to know whether we need to remove entries
         if self.keyvec.len() == self.capacity {
