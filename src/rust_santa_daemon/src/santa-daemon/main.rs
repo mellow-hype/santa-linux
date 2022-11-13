@@ -1,16 +1,10 @@
 /// Rust implementation of the Santa daemon
-// std imports
 use std::error::Error;
 use std::fs::File;
 
-// daemonize support
 use daemonize::Daemonize;
-// arg parsing support
 use clap::Parser;
-// json serde
-// use serde_json::json;
 
-// Local imports
 use libsanta::{SANTAD_NAME, XPC_CLIENT_PATH, STATUS_CMD, SantaMode};
 use libsanta::netlink::{NlSantaCommand, NlSantaAttribute};
 use libsanta::daemon::SantaDaemon;
@@ -25,34 +19,9 @@ struct Cli {
     daemonize: bool,
 }
 
-/// Main
-fn main() -> Result<(), Box<dyn Error>> {
-    // Parse command-line args
-    let args = Cli::parse();
-
+fn worker_loop() -> Result<(), Box<dyn Error>> {
     // instantiate the daemon instance
     let mut daemon = SantaDaemon::new(SantaMode::Monitor);
-
-    // determine whether we should fork to the background or run normally
-    println!("{SANTAD_NAME}: Entering main message processing loop...");
-    match args.daemonize {
-        true => {
-            let stderr = File::create("/var/log/santad_err.log")
-                .expect("should have write access to /var/log");
-            let stdout = File::create("/var/log/santad.log")
-                .expect("should have write access to /var/log");
-            let daemon = Daemonize::new()
-                .stderr(stderr)
-                .stdout(stdout);
-
-            // main loop
-            match daemon.start() {
-                Ok(_) => println!("Successfully daemonized the santad process..."),
-                Err(err) => eprintln!("Failed to daemonize the process: {err}"),
-            };
-        },
-        false => {},
-    };
 
     // do stuff forever
     loop {
@@ -85,7 +54,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     _ => eprintln!("{SANTAD_NAME}: received unknown command"),
                 }
             } else {
-                 eprintln!("{SANTAD_NAME}: Failed to read paylod from generic netlink message");
+                eprintln!("{SANTAD_NAME}: Failed to read paylod from generic netlink message");
             }
         };
         // Check for messages on the xpc socket
@@ -101,6 +70,40 @@ fn main() -> Result<(), Box<dyn Error>> {
                 _ => {},
             };
         };
-
     };
+}
+
+/// Main
+fn main() -> Result<(), Box<dyn Error>> {
+    // Parse command-line args
+    let args = Cli::parse();
+
+    // determine whether we should fork to the background or run normally
+    println!("{SANTAD_NAME}: Entering main message processing loop...");
+    match args.daemonize {
+        true => {
+            let stderr = File::create("/var/log/santad_err.log")
+                .expect("should have write access to /var/log");
+            let stdout = File::create("/var/log/santad.log")
+                .expect("should have write access to /var/log");
+            let daemonized = Daemonize::new()
+                .stderr(stderr)
+                .stdout(stdout);
+
+            // main loop
+            match daemonized.start() {
+                Ok(_) => {
+                    println!("Successfully daemonized the santad process...");
+                    // do stuff forever
+                    worker_loop().unwrap();
+                }
+                Err(err) => eprintln!("Failed to daemonize the process: {err}"),
+            };
+        },
+        false => {
+            // do stuff forever
+            worker_loop().unwrap();
+        },
+    };
+    Ok(())
 }
