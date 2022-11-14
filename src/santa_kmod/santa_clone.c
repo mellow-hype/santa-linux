@@ -32,6 +32,7 @@
 static int agent_pid = -1;
 /* Completion object used to hold execs while the daemon sends back a response */
 static DECLARE_COMPLETION(hash_done);
+static DEFINE_SPINLOCK(exec_lock);
 
 
 /**
@@ -45,14 +46,14 @@ static DECLARE_COMPLETION(hash_done);
  */
 /* callback for handling msg command */
 int gnl_cb_santa_msg_doit(struct sk_buff *sender_skb, struct genl_info *info);
+/* no-op callback for do-hash command */
+int gnl_cb_santa_do_hash_doit(struct sk_buff *sender_skb, struct genl_info *info);
 /* callback for handling hash-done command */
 int gnl_cb_santa_hash_done_doit(struct sk_buff *sender_skb, struct genl_info *info);
 /* callback for handling check-in message */
 int gnl_cb_santa_checkin_doit(struct sk_buff *sender_skb, struct genl_info *info);
 /* error reply callback */
 int gnl_cb_doit_reply_error(struct sk_buff *sender_skb, struct genl_info *info);
-/* callback for handling pid command */
-int gnl_cb_santactl_get_pid_doit(struct sk_buff *sender_skb, struct genl_info *info);
 
 /*
  * ====================
@@ -93,8 +94,8 @@ typedef enum GNL_SANTA_COMMAND {
     GNL_SANTA_C_MSG,
     // CHECK-IN command
     GNL_SANTA_C_MSG_CHECKIN,
-    // GETPID command
-    GNL_SANTA_C_MSG_PID,
+    // DO HASH command (this is sent by the kmod, not handled by it)
+    GNL_SANTA_C_MSG_DO_HASH,
     // HASH DONE command
     GNL_SANTA_C_MSG_HASH_DONE,
     // Reply with error
@@ -154,12 +155,12 @@ struct genl_ops gnl_santa_ops[GNL_SANTA_OPS_LEN] = {
         .done = NULL,
         .validate = 0,
     },
-    // MSG_PID
+    // MSG_DO_HASH (no-op on the kernel side)
     {
-        .cmd = GNL_SANTA_C_MSG_PID,
+        .cmd = GNL_SANTA_C_MSG_DO_HASH,
         .flags = 0,
         .internal_flags = 0,
-        .doit = gnl_cb_santactl_get_pid_doit, // handler
+        .doit = gnl_cb_santa_do_hash_doit, // handler (we reuse the msg-do-it since we have to provide a handler here)
         .dumpit = NULL,
         .start = NULL,
         .done = NULL,
@@ -242,6 +243,15 @@ static struct genl_family gnl_santa_family = {
 
 /**
  * ====================
+ * NO-OP GNL DO_HASH CALLBACK HANDLER IMPLEMENTATION
+ * ====================
+*/
+int gnl_cb_santa_do_hash_doit(struct sk_buff *sender_skb, struct genl_info *info) {
+    return 0;
+}
+
+/**
+ * ====================
  * GNL MSG CALLBACK HANDLER IMPLEMENTATION
  * ====================
 */
@@ -277,67 +287,6 @@ int gnl_cb_santa_msg_doit(struct sk_buff *sender_skb, struct genl_info *info) {
     }
     return 0;
 }
-
-/**
- * ====================
- * GNL GETPID CALLBACK HANDLER IMPLEMENTATION
- * ====================
-*/
-int gnl_cb_santactl_get_pid_doit(struct sk_buff *sender_skb, struct genl_info *info) {
-    struct sk_buff *reply_skb;
-    int rc;
-    void *msg_head;
-    char resp_msg[MAX_PAYLOAD];
-
-    // check we got info in a good state
-    if (info == NULL) {
-        // should never happen
-        pr_err("An error occurred in %s():\n", __func__);
-        return -EINVAL;
-    }
-
-    /* Send a message back */
-    reply_skb = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
-    if (reply_skb == NULL) {
-        pr_err("An error occurred in %s():\n", __func__);
-        return -ENOMEM;
-    }
-
-    // Create the message headers
-    msg_head = genlmsg_put(
-            reply_skb,          // buffer for netlink message: struct sk_buff *
-            info->snd_portid,   // sending port (not process) id: int
-            0,                  // sequence number: int (might be used by receiver, but not mandatory)
-            &gnl_santa_family,  // struct genl_family *
-            0,                  // flags for Netlink header: int; application specific and not mandatory
-            GNL_SANTA_C_MSG     // The command/operation (u8) from `enum GNL_SANTA_COMMAND`
-    );
-    if (msg_head == NULL) {
-        rc = ENOMEM;
-        pr_err("An error occurred in %s():\n", __func__);
-        return -rc;
-    }
-
-    // Plave the PID in the GNL_SANTA_A_MSG attribute
-    snprintf(resp_msg, sizeof(resp_msg), "%d", agent_pid);
-    rc = nla_put_string(reply_skb, GNL_SANTA_A_MSG, resp_msg);
-    if (rc != 0) {
-        pr_err("An error occurred in %s():\n", __func__);
-        return -rc;
-    }
-
-    // Finalize the message
-    genlmsg_end(reply_skb, msg_head);
-
-    // Send the response
-    rc = genlmsg_reply(reply_skb, info);
-    if (rc != 0) {
-        pr_err("An error occurred in %s():\n", __func__);
-        return -rc;
-    }
-    return 0;
-}
-
 
 /**
  * ====================
@@ -436,12 +385,15 @@ int gnl_cb_santa_hash_done_doit(struct sk_buff *sender_skb, struct genl_info *in
         return 0;
     }
     // Trigger the completion to let the kprobe resume
+    spin_lock(&exec_lock);;
     complete(&hash_done);
+    spin_unlock(&exec_lock);;
     return 0;
 }
 
 // placeholder for example error reply handler
 int gnl_cb_doit_reply_error(struct sk_buff *sender_skb, struct genl_info *info) {
+    // TODO: we should do something better here
     return -EINVAL;
 }
 
@@ -531,7 +483,7 @@ static int handler_pre_finalize_exec(struct kprobe *p, struct pt_regs *regs)
     snprintf(msg, sizeof(msg), "%d", current->pid);
 
     // send the message to the daemon
-    SantaCommand_t cmd = GNL_SANTA_C_MSG;
+    SantaCommand_t cmd = GNL_SANTA_C_MSG_DO_HASH;
     int res = gnl_santa_send_cmd(cmd, msg);
     if (res != 0) {
         pr_err("[%s]: ERROR %s() ret=%d\n", KMOD_NAME, __func__, res);
@@ -539,6 +491,9 @@ static int handler_pre_finalize_exec(struct kprobe *p, struct pt_regs *regs)
     }
     // hold until we get a response from the daemon?
     wait_for_completion(&hash_done);
+    spin_lock(&exec_lock);;
+    reinit_completion(&hash_done);
+    spin_unlock(&exec_lock);;
     return 0;
 }
 

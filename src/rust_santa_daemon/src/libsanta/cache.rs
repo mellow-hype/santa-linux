@@ -4,38 +4,7 @@ use std::time::SystemTime;
 use std::collections::HashMap;
 use std::os::linux::fs::MetadataExt;
 
-/// Tests
-#[test]
-fn cache_insert_to_capacity() {
-    let capacity = 1000;
-    let hashy = "hashahshahhsa";
-    let mut sig = CacheSignature::new("/etc/profile");
-    let mut cache = SantaCache::new(capacity);
-    for _ in 1..capacity {
-        cache.insert(sig.to_string(), hashy.to_string());
-        // mutate the signature so we have unique sigs on each iteration
-        sig.created = sig.created + 1;
-    }
-    assert_eq!(cache.buffer.len(), capacity-1);
-}
-
-
-#[test]
-fn cache_capacity_is_maintained() {
-    let capacity = 1000;
-    let hashy = "hashahhs";
-    let mut sig = String::from("/ile");
-    let mut cache = SantaCache::new(capacity);
-    for _ in 1..(capacity*2) {
-        cache.insert(sig.to_string(), hashy.to_string());
-        // mutate the signature so we have unique sigs on each iteration
-        sig = String::from(format!("{}x", sig));
-    }
-    // the hashmap should not have expanded past capacity-1 entries
-    assert_eq!(cache.buffer.len(), capacity-1);
-    // the keyvec should not have expanded past capacity-1 entries
-    assert_eq!(cache.keyvec.len(), capacity-1);
-}
+use std::error::Error;
 
 /// SantaCacheSignature
 #[derive(Clone, Eq, PartialEq)]
@@ -54,29 +23,25 @@ impl CacheSignature {
 
 // CacheSignature implementation
 impl CacheSignature {
-    pub fn new(filepath: &str) -> CacheSignature {
+    pub fn new(filepath: &str) -> Result<CacheSignature, Box<dyn Error>> {
         // get file metadata for signature
         let meta = fs::metadata(filepath).expect("should be able to read file");
         // mod time
-        let last_mod = meta.modified()
-            .expect("should be on a unix system")
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("should be able to get duration")
+        let last_mod = meta.modified()?
+            .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
         // created
-        let created = meta.created()
-            .expect("should be on a unix system")
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("should be able to get duration")
+        let created = meta.created()?
+            .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
         // inode
         let inode = meta.st_ino();
 
-        CacheSignature {
+        Ok(CacheSignature {
             inode,
             last_mod,
             created,
-        }
+        })
     }
 }
 
@@ -107,6 +72,7 @@ impl SantaCache {
         }
     }
 
+    /// Get the current number of items in the cache
     pub fn len(&self) -> usize {
         self.buffer.len()
     }

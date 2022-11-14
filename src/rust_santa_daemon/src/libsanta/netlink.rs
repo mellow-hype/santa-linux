@@ -1,6 +1,8 @@
-use crate::{NL_SANTA_PROTO, NL_SANTA_FAMILY_NAME};
 use std::process;
 use std::error::Error;
+
+pub const NL_SANTA_PROTO: u8 = 30;
+pub const NL_SANTA_FAMILY_NAME: &str = "gnl_santa";
 
 // neli import for Netlink support
 #[allow(unused_imports)]
@@ -22,10 +24,9 @@ pub enum NlSantaCommand {
     // We expect MSG commands to have NlSantaAttribute:Msg
     Msg = 1,        // Generic message type (string)
     MsgCheckin = 2, // Checkin from agent (string)
-    MsgGetPid = 3,  // Command for GetPID
+    MsgDoHash = 3, // Checkin from agent (string)
     MsgHashDone = 4,// Agent finished hash operation
     ReplyWithNlmsgErr = 5,
-    MsgGetRules = 6,
 }
 // Implement necessary trait for the neli lib on the NlSantaCommand enum.
 impl neli::consts::genl::Cmd for NlSantaCommand{}
@@ -38,47 +39,44 @@ pub enum NlSantaAttribute {
     Unspec = 0,
     // We expect MSG attributes to be NULL terminated C strings
     Msg = 1,
-    MsgCheckin = 2,
-    MsgHashDone = 3,
 }
 // Implement necessary trait for the neli lib on the NlSantaAttribute enum.
 impl neli::consts::genl::NlAttrType for NlSantaAttribute{}
 
 
 /// Netlink socket wrapper object with send and recv methods
-pub struct NetlinkAgentGeneric {
+pub struct NetlinkAgent {
     pub family_id: u16,
     pub socket: NlSocketHandle,
     pub groups: Vec<u32>,
 }
 
-/// NetlinkAgentGeneric implementation.
-impl NetlinkAgentGeneric {
+/// NetlinkAgent implementation.
+impl NetlinkAgent {
     /// Create a new instance of a NetlinkAgent.
     /// Example:
     /// ```
-    /// let agent = NetlinkAgentGeneric::new(Some(0), &[]);
+    /// let agent = NetlinkAgent::new(Some(0), &[]);
     /// ```
-    pub fn new(pid: Option<u32>, groups: &[u32]) -> NetlinkAgentGeneric {
+    pub fn new(pid: Option<u32>, groups: &[u32]) -> Result<NetlinkAgent, Box<dyn Error>> {
         // create and bind the socket
         let mut socket = NlSocketHandle::connect(
             NlFamily::Generic,
             pid,
             groups,
-        ).expect("socket should be created");
+        )?;
 
         // resolve family ID
-        let family_id = socket.resolve_genl_family(NL_SANTA_FAMILY_NAME)
-            .expect("the kernel module should be loaded before running the daemon");
+        let family_id = socket.resolve_genl_family(NL_SANTA_FAMILY_NAME)?;
 
-        NetlinkAgentGeneric { family_id, socket, groups: Vec::from(groups) }
+        Ok(NetlinkAgent { family_id, socket, groups: Vec::from(groups) })
     }
 
     /// Send a specific `NlSantaCommand` and message payload via Netlink; the socket handle passed
     /// in should already be initialized and bound using `NlSocketHandle::connect()`.
     /// Example:
     /// ```
-    /// let agent = NetlinkAgentGeneric::new(Some(0), &[]);
+    /// let agent = NetlinkAgent::new(Some(0), &[]);
     /// agent.send_cmd(NlSantaCommand::Msg, "hello")?;
     /// ```
     pub fn send_cmd(&mut self, command: NlSantaCommand, 
@@ -125,7 +123,7 @@ impl NetlinkAgentGeneric {
     /// Receive a netlink message using the opened socket
     /// Example:
     /// ```
-    /// let agent = NetlinkAgentGeneric::new(Some(0), &[]);
+    /// let agent = NetlinkAgent::new(Some(0), &[]);
     /// let res = agent.recv().unwrap();
     /// let msg = res.get_payload().unwrap();
     /// let attr_handle = msg.get_attr_handle().unwrap();
@@ -133,16 +131,41 @@ impl NetlinkAgentGeneric {
     ///     get_attr_payload_as_with_len::<String>(NlSantaAttribute::Msg).unwrap();
     /// ```
     pub fn recv(&mut self)
-                -> Option<Nlmsghdr<u16, Genlmsghdr<NlSantaCommand, NlSantaAttribute>>> {
+                -> Result<Option<(NlSantaCommand, String)>, String> {
         // If the socket is in non-blocking mode the Result'ing Option may be None if no
         // data could be immediately read from the socket, which isn't an issue. In blocking
         // mode, the Result will either be Some(Nlmsghdr) or NlError; errors are an issue regardless
         // of the blocking context.
         match self.socket.recv() {
-            Ok(msg) => msg,
+            Ok(msg) => {
+                let mess: Option<Nlmsghdr<u16, Genlmsghdr<NlSantaCommand, NlSantaAttribute>>> = msg;
+                match mess {
+                    // Some means we were able to read a message from the socket
+                    Some(x) => {
+                        if let Ok(pay) = x.get_payload() {
+                            let cmd: NlSantaCommand = pay.cmd;
+                            let attr_handle = pay.get_attr_handle();
+                            let x = attr_handle.get_attr_payload_as_with_len::<String>(NlSantaAttribute::Msg);
+                            if let Ok(payload) = x {
+                                return Ok(Some((cmd, payload)))
+                            } else {
+                                return Err("failed to parse payload from the attr".to_string())
+                            }
+                        } else {
+                            return Err("failed to get payload from nlmsgh header".to_string())
+                        }
+                    }
+                    // None means a message couldn't be immediately read from the socket, which is okay
+                    // since the netlink socket it set to be non-blocking; we just move on and try to read again
+                    // on the next iteration
+                    None => {
+                        return Ok(None)
+                    }
+                }
+            },
             Err(e) => {
-                eprintln!("error on netlink recv(): {}", e);
-                None
+                let err = format!("error on netlink recv: {e}");
+                Err(err.to_string())
             }
         }
     }

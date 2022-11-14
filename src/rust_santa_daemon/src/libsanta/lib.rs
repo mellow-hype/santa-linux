@@ -1,25 +1,14 @@
 pub mod netlink;
-pub mod daemon;
 pub mod uxpc;
 pub mod engine;
+pub mod commands;
+pub mod consts;
 mod cache;
 
 use std::fmt;
-
-// Constants
-pub const SANTAD_NAME: &str = "[santa-DAEMON]";
-pub const NL_SANTA_PROTO: u8 = 30;
-pub const NL_SANTA_FAMILY_NAME: &str = "gnl_santa";
-
-pub const SANTA_BASE_PATH: &str = "/opt/santa";
-pub const RULES_DB_PATH: &str = "/opt/santa/rules.json";
-pub const XPC_SOCKET_PATH: &str = "/opt/santa/santa.xpc";
-pub const XPC_CLIENT_PATH: &str = "/opt/santa/santactl.xpc";
-pub const XPC_SERVER_PATH: &str = "/opt/santa/santad.xpc";
-
-// status command
-pub const STATUS_CMD: &str = "status";
-
+use serde::Serialize;
+use serde_json::json;
+use consts::{SANTACTL_NAME, SANTAD_NAME};
 
 /// SantaMode Enum
 #[derive(Clone, Copy)]
@@ -34,6 +23,36 @@ impl fmt::Display for SantaMode {
         match self {
             SantaMode::Lockdown => write!(f, "Lockdown"),
             SantaMode::Monitor => write!(f, "Monitor"),
+        }
+    }
+}
+
+/// Trait for types that support being json-ified to simplify doing so.
+pub trait Jsonify: Serialize {
+    fn jsonify(&self) -> String {
+        let js = json!(self);
+        js.to_string()
+    }
+
+    fn jsonify_pretty(&self) -> String {
+        serde_json::to_string_pretty(self)
+            .unwrap_or(self.jsonify())
+    }
+}
+
+pub trait Loggable {
+    fn log(&self, src: LoggerSource);
+}
+
+pub enum LoggerSource {
+    SantaDaemon,
+    SantaCtl,
+}
+impl ToString for LoggerSource {
+    fn to_string(&self) -> String {
+        match self {
+            LoggerSource::SantaCtl => String::from(SANTACTL_NAME),
+            LoggerSource::SantaDaemon => String::from(SANTAD_NAME),
         }
     }
 }
