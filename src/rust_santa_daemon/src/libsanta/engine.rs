@@ -300,8 +300,8 @@ impl PolicyEngine {
     /// Return a PolicyDecision for the target pointed to by PolicyEngineTarget, only performing 
     /// a hashing operation if the target's signature is not in the hash cache.
     pub fn analyze(&mut self, target: PolicyEngineTarget) -> PolicyEngineResult {
-        let filepath;
 
+        let filepath;
         if let PolicyEngineTargetType::Pid = target.1 {
             filepath = self.canonical_path(&target.0.clone());
         } else {
@@ -309,7 +309,22 @@ impl PolicyEngine {
         }
 
         // calculate a signature using file metadata
-        let uniq_sig = CacheSignature::new(&target.0);
+        let uniq_sig = match CacheSignature::new(&target.0) {
+            // Skip using the cache if we were unable to generate a cache signature
+            Err(_) => {
+                // do the hash operation
+                let hash = self.hash(&target.0);
+
+                // make a decision
+                let hash_state = self.hash_state(&hash);
+                let decision = self.make_decision(hash_state);
+                let reason = PolicyDecisionReason::from(hash_state);
+
+                // return the result
+                return PolicyEngineResult { filepath, hash, decision, reason }
+            }
+            Ok(s) => {s},
+        };
 
         // check if the signature is in the cache
         match self.cache.find(uniq_sig.to_string()) {

@@ -61,19 +61,18 @@ impl NetlinkAgent {
     /// ```
     /// let agent = NetlinkAgent::new(Some(0), &[]);
     /// ```
-    pub fn new(pid: Option<u32>, groups: &[u32]) -> NetlinkAgent {
+    pub fn new(pid: Option<u32>, groups: &[u32]) -> Result<NetlinkAgent, Box<dyn Error>> {
         // create and bind the socket
         let mut socket = NlSocketHandle::connect(
             NlFamily::Generic,
             pid,
             groups,
-        ).expect("socket should be created");
+        )?;
 
         // resolve family ID
-        let family_id = socket.resolve_genl_family(NL_SANTA_FAMILY_NAME)
-            .expect("the kernel module should be loaded before running the daemon");
+        let family_id = socket.resolve_genl_family(NL_SANTA_FAMILY_NAME)?;
 
-        NetlinkAgent { family_id, socket, groups: Vec::from(groups) }
+        Ok(NetlinkAgent { family_id, socket, groups: Vec::from(groups) })
     }
 
     /// Send a specific `NlSantaCommand` and message payload via Netlink; the socket handle passed
