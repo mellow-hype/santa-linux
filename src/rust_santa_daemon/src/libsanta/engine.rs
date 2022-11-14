@@ -1,6 +1,7 @@
 // std imports
-use std::{io, fs};
+use std::{io, fs, fmt};
 use std::collections::HashMap;
+use clap::ValueEnum;
 use nix::sys::signal;
 use nix::unistd::Pid;
 
@@ -14,10 +15,19 @@ use crate::cache::{SantaCache, CacheSignature};
 
 /// Enum of policy decisions returned during hash validation checks
 #[allow(dead_code)]
-#[derive(Deserialize, Serialize, Debug, Clone, Copy)]
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, ValueEnum)]
 pub enum PolicyRule {
     Allow,
     Block,
+}
+
+impl fmt::Display for PolicyRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PolicyRule::Allow => write!(f, "Allowlist"),
+            PolicyRule::Block => write!(f, "Blocklist"),
+        }
+    }
 }
 
 /// PolicyDecisionReason: the reason for a given policy decision
@@ -56,6 +66,7 @@ impl ToString for PolicyDecisionReason {
 pub enum PolicyDecision {
     Allow,
     Block,
+    Invalid,
 }
 
 /// Convert a PolicyDecision to String
@@ -64,6 +75,7 @@ impl ToString for PolicyDecision {
         match self {
             PolicyDecision::Allow => String::from("ALLOW"),
             PolicyDecision::Block => String::from("BLOCK"),
+            PolicyDecision::Invalid => String::from("INVALID")
         }
     }
 }
@@ -167,6 +179,7 @@ pub struct PolicyEngine {
     pub rules: HashMap<String, PolicyRule>,
     cache: SantaCache,
 }
+impl Jsonify for HashMap<String, PolicyRule> {}
 
 /// PolicyEngine implementation
 impl PolicyEngine {

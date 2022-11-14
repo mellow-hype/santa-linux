@@ -1,6 +1,7 @@
 /// Rust implementation of the Santa daemon
 mod daemon;
 use daemon::SantaDaemon;
+use libsanta::commands::RuleAction;
 
 use std::error::Error;
 use std::fs::OpenOptions;
@@ -85,6 +86,24 @@ fn worker_loop() -> Result<(), Box<dyn Error>> {
                     },
                     CommandTypes::Rule => {
                         if let Ok(_cmd) = serde_json::from_str::<RuleCommand>(&_asdf.command) {
+                            let msg;
+                            match _cmd.action {
+                                RuleAction::Insert => {
+                                    daemon.engine.add_rule(&_cmd.hash, _cmd.policy);
+                                    msg = format!("Inserted {} rule for hash {}", _cmd.policy, _cmd.hash);
+                                },
+                                RuleAction::Remove => {
+                                    daemon.engine.remove_rule(&_cmd.hash);
+                                    msg = format!("Inserted {} rule for hash {}", _cmd.policy, _cmd.hash);
+                                },
+                                RuleAction::Show => {
+                                    msg = daemon.engine.rules.jsonify_pretty();
+                                },
+                            }
+                            let mut xclient = SantaXpcClient::new(String::from(XPC_CLIENT_PATH));
+                            if let Err(err) = xclient.send(msg.as_bytes()) {
+                                eprintln!("{SANTAD_NAME}: Failed to send message to XPC client - {err}")
+                            }
                         } else {
                             eprintln!("Invalid message format for FileInfoCommand: {}", _asdf.command)
                         }

@@ -5,8 +5,9 @@ use clap::{Parser, Subcommand};
 // Local imports
 use libsanta::Jsonify;
 use libsanta::consts::{XPC_SOCKET_PATH, XPC_CLIENT_PATH};
+use libsanta::engine::PolicyRule;
 use libsanta::uxpc::{SantaXpcClient, SantaXpcServer};
-use libsanta::commands::{CommandTypes, SantaCtlCommand, RuleAction, StatusCommand, FileInfoCommand};
+use libsanta::commands::{CommandTypes, SantaCtlCommand, RuleAction, StatusCommand, FileInfoCommand, RuleCommand};
 
 /// santactl is used to interact with the santa-daemon
 #[derive(Parser)]
@@ -14,6 +15,24 @@ struct Cli {
     /// Subcommands 
     #[command(subcommand)]
     command: SubCommands,
+}
+
+#[derive(Subcommand)]
+pub enum RuleSubCommands {
+    /// Show rules
+    Show,
+    /// Insert rules
+    Insert {
+        /// Rule type
+        #[arg(value_enum)]
+        rule: PolicyRule,
+        /// SHA256 hash
+        hash: String,
+    },
+    /// Delete rules
+    Delete {
+        hash: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -27,10 +46,8 @@ pub enum SubCommands {
     },
     /// Manage the daemon's ruleset
     Rule {
-        #[arg(short, long)]
-        hash: Option<String>,
-        #[arg(short, long)]
-        action: Option<RuleAction>,
+        #[command(subcommand)]
+        action: RuleSubCommands,
     }
 }
 
@@ -63,9 +80,43 @@ fn main() {
                 command: fileinfo.jsonify(),
             };
         }
-        _ => {
-            eprintln!("unimplemented command");
-            return
+        SubCommands::Rule { action } => {
+            match action {
+                RuleSubCommands::Insert { hash, rule } => {
+                    let rulecmd = RuleCommand {
+                        action: RuleAction::Insert,
+                        hash: String::from(hash),
+                        policy: *rule,
+                    };
+                    cmd = SantaCtlCommand {
+                        ctype: CommandTypes::Rule,
+                        command: rulecmd.jsonify(),
+                    }
+                },
+                RuleSubCommands::Delete { hash } => {
+                    let rule = PolicyRule::Allow; // won't be used
+                    let rulecmd = RuleCommand {
+                        action: RuleAction::Remove,
+                        hash: String::from(hash),
+                        policy: rule,
+                    };
+                    cmd = SantaCtlCommand {
+                        ctype: CommandTypes::Rule,
+                        command: rulecmd.jsonify(),
+                    }
+                },
+                RuleSubCommands::Show {} => {
+                    let rulecmd = RuleCommand {
+                        action: RuleAction::Show,
+                        hash: String::from(""),
+                        policy: PolicyRule::Allow, // won't be used, but need a value
+                    };
+                    cmd = SantaCtlCommand {
+                        ctype: CommandTypes::Rule,
+                        command: rulecmd.jsonify(),
+                    }
+                },
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 use crate::engine::PolicyRule;
 use crate::Jsonify;
 use serde::{Deserialize, Serialize};
+use clap::Subcommand;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum CommandTypes {
@@ -9,37 +10,18 @@ pub enum CommandTypes {
     Rule,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Subcommand, Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum RuleAction {
     Insert,
     Remove,
-    Display,
-    Unknown,
-}
-
-impl From<String> for RuleAction {
-    fn from(action: String) -> RuleAction {
-        match &action[..] {
-            "show" => {
-                RuleAction::Display
-            },
-            "insert" => {
-                RuleAction::Display
-            },
-            "delete" => {
-                RuleAction::Display
-            },
-            _ => {RuleAction::Unknown},
-        }
-
-    }
+    Show,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RuleCommand {
-    action: RuleAction,
-    hash: Option<String>,
-    policy: Option<PolicyRule>,
+    pub action: RuleAction,
+    pub hash: String,
+    pub policy: PolicyRule,
 }
 impl Jsonify for RuleCommand {}
 
