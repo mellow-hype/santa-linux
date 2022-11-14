@@ -107,6 +107,7 @@ impl SantaCache {
         }
     }
 
+    /// Get the current number of items in the cache
     pub fn len(&self) -> usize {
         self.buffer.len()
     }

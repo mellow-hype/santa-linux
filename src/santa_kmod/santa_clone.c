@@ -32,6 +32,7 @@
 static int agent_pid = -1;
 /* Completion object used to hold execs while the daemon sends back a response */
 static DECLARE_COMPLETION(hash_done);
+static DEFINE_SPINLOCK(exec_lock);
 
 
 /**
@@ -436,7 +437,9 @@ int gnl_cb_santa_hash_done_doit(struct sk_buff *sender_skb, struct genl_info *in
         return 0;
     }
     // Trigger the completion to let the kprobe resume
+    spin_lock(&exec_lock);;
     complete(&hash_done);
+    spin_unlock(&exec_lock);;
     return 0;
 }
 
@@ -539,6 +542,9 @@ static int handler_pre_finalize_exec(struct kprobe *p, struct pt_regs *regs)
     }
     // hold until we get a response from the daemon?
     wait_for_completion(&hash_done);
+    spin_lock(&exec_lock);;
+    reinit_completion(&hash_done);
+    spin_unlock(&exec_lock);;
     return 0;
 }
 

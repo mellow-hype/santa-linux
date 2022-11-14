@@ -1,36 +1,34 @@
-// local imports
-use crate::{SANTAD_NAME, SANTA_BASE_PATH, RULES_DB_PATH, SantaMode};
-use crate::cache::{SantaCache, CacheSignature};
-
 // std imports
-use std::collections::HashMap;
 use std::{io, fs};
+use std::collections::HashMap;
 use nix::sys::signal;
 use nix::unistd::Pid;
 
-// sha256 support
 use sha2::{Sha256, Digest};
-// json
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+// local imports
+use crate::{SantaMode, Jsonify, Loggable, LoggerSource};
+use crate::consts::{SANTAD_NAME, SANTA_BASE_PATH, RULES_DB_PATH};
+use crate::cache::{SantaCache, CacheSignature};
 
 /// Enum of policy decisions returned during hash validation checks
 #[allow(dead_code)]
-#[derive(Deserialize, Debug, Clone, Copy)]
+#[derive(Deserialize, Serialize, Debug, Clone, Copy)]
 pub enum PolicyRule {
     Allow,
     Block,
 }
 
 /// PolicyDecisionReason: the reason for a given policy decision
-#[derive(Clone, Copy, Eq, PartialEq)]
-#[allow(dead_code)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub enum PolicyDecisionReason {
     AllowListed,
     BlockListed,
     Unknown,
 }
 
+/// Derive a PolicyDecisionReason from a HashState
 impl From<HashState> for PolicyDecisionReason {
     fn from(s: HashState) -> PolicyDecisionReason {
         match s {
@@ -41,50 +39,34 @@ impl From<HashState> for PolicyDecisionReason {
     }
 }
 
-impl PolicyDecisionReason {
-    pub fn as_str(&self) -> &'static str {
+/// Implement ToString trait for PolicyDecisionReason
+impl ToString for PolicyDecisionReason {
+    fn to_string(&self) -> String {
         match self {
-            PolicyDecisionReason::AllowListed => "ALLOWLISTED",
-            PolicyDecisionReason::BlockListed => "BLOCKLISTED",
-            PolicyDecisionReason::Unknown => "UNKNOWN",
-        }
-    }
-}
-
-/// HashState
-#[derive(Clone, Copy, Eq, PartialEq)]
-#[allow(dead_code)]
-pub enum HashState {
-    HashOk,
-    HashBlock,
-    HashUnknown,
-}
-impl From<PolicyRule> for HashState {
-    fn from(s: PolicyRule) -> HashState {
-        match s {
-            PolicyRule::Allow => HashState::HashOk,
-            PolicyRule::Block => HashState::HashBlock,
+            PolicyDecisionReason::AllowListed => String::from("ALLOWLISTED"),
+            PolicyDecisionReason::BlockListed => String::from("BLOCKLISTED"),
+            PolicyDecisionReason::Unknown => String::from("UNKNOWN"),
         }
     }
 }
 
 /// PolicyDecision
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Debug)]
 #[allow(dead_code)]
 pub enum PolicyDecision {
     Allow,
     Block,
 }
 
-impl PolicyDecision {
-    pub fn as_str(&self) -> &'static str {
+/// Convert a PolicyDecision to String
+impl ToString for PolicyDecision {
+    fn to_string(&self) -> String {
         match self {
-            PolicyDecision::Allow => "ALLOW",
-            PolicyDecision::Block => "BLOCK",
+            PolicyDecision::Allow => String::from("ALLOW"),
+            PolicyDecision::Block => String::from("BLOCK"),
         }
     }
 }
-
 /// Derive a PolicyDecision from a PolicyRule
 impl From<PolicyRule> for PolicyDecision {
     fn from(s: PolicyRule) -> PolicyDecision {
@@ -94,8 +76,7 @@ impl From<PolicyRule> for PolicyDecision {
         }
     }
 }
-
-/// Derive a policy decision from the mode.
+/// Derive a policy decision from a SantaMode
 impl From<SantaMode> for PolicyDecision {
     fn from(s: SantaMode) -> PolicyDecision {
         match s {
@@ -106,8 +87,27 @@ impl From<SantaMode> for PolicyDecision {
 }
 
 
+/// HashState
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+pub enum HashState {
+    HashOk,
+    HashBlock,
+    HashUnknown,
+}
+
+/// Derive a HashState from a PolicyRule
+impl From<PolicyRule> for HashState {
+    fn from(s: PolicyRule) -> HashState {
+        match s {
+            PolicyRule::Allow => HashState::HashOk,
+            PolicyRule::Block => HashState::HashBlock,
+        }
+    }
+}
+
 /// PolicyEngineResult
-#[derive(Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct PolicyEngineResult {
     pub filepath: String,
     pub hash: String,
@@ -115,22 +115,51 @@ pub struct PolicyEngineResult {
     pub reason: PolicyDecisionReason,
 }
 
-impl PolicyEngineResult {
-    pub fn log(&self) {
-        println!("{SANTAD_NAME}: {} ({}) {} -> {}",
-            self.reason.as_str(),
-            self.decision.as_str(),
+/// PolicyEngineResult logging method
+impl Loggable for PolicyEngineResult {
+    fn log(&self, src: LoggerSource) {
+        println!("{}: {} ({}) {} -> {}",
+            src.to_string(),
+            self.reason.to_string(),
+            self.decision.to_string(),
             self.filepath,
             self.hash);
     }
 }
+/// Implement Jsonify trait for PolicyEngineResult
+impl Jsonify for PolicyEngineResult {}
 
+
+/// A struct describing the current status of the PolicyEngine
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct PolicyEngineStatus {
     mode: String,
     rule_count: usize,
     cache_count: usize,
 }
+/// Implement Jsonify trait for PolicyEngineStatus
+impl Jsonify for PolicyEngineStatus {}
+
+
+// PolicyEngineTarget types
+pub enum PolicyEngineTargetType {
+    Pid,
+    Path,
+}
+
+// A struct representing a target for the PolicyEngine
+pub struct PolicyEngineTarget ( String, PolicyEngineTargetType );
+impl From<String> for PolicyEngineTarget {
+    fn from(target: String) -> PolicyEngineTarget {
+        if let Ok(pid) = target.parse::<u32>() {
+            let target = String::from(format!("/proc/{pid}/exe"));
+            return PolicyEngineTarget(target, PolicyEngineTargetType::Pid)
+        } else {
+            return PolicyEngineTarget(target, PolicyEngineTargetType::Path)
+        }
+    }
+}
+
 
 /// PolicyEngine struct
 pub struct PolicyEngine {
@@ -178,7 +207,7 @@ impl PolicyEngine {
     #[allow(dead_code)]
     pub fn add_rule(&mut self, hash: &str, rule: PolicyRule) {
         println!("{SANTAD_NAME}: adding {} rule for hash {hash}",
-                 PolicyDecision::from(rule).as_str());
+                 PolicyDecision::from(rule).to_string());
         self.rules.insert(String::from(hash), rule);
     }
 
@@ -211,12 +240,10 @@ impl PolicyEngine {
     }
 
     /// Kill a target process by PID
-    fn kill(&self, pid: String, reason: PolicyDecisionReason) {
+    pub fn kill(&self, pid: String) {
         let target: i32 = pid.parse().expect("should have received number");
         let target_pid = Pid::from_raw(target);
-        let reason_str = reason.as_str();
 
-        println!("{SANTAD_NAME}: {reason_str} application; killing pid {pid}");
         signal::kill(target_pid, signal::SIGKILL).unwrap();
     }
 
@@ -270,15 +297,19 @@ impl PolicyEngine {
         };
     }
 
-    /// Return a PolicyDecision for a given target PID `t_pid`, only performing the hashing
-    /// operation if the file signature is not in the hash cache.
-    pub fn analyze(&mut self, t_pid: &str) -> PolicyEngineResult {
-        // construct the `/proc/PID/exe
-        let proc_pid_path = format!("/proc/{t_pid}/exe");
-        // canonical path for pid exe
-        let filepath = self.canonical_path(&proc_pid_path);
+    /// Return a PolicyDecision for the target pointed to by PolicyEngineTarget, only performing 
+    /// a hashing operation if the target's signature is not in the hash cache.
+    pub fn analyze(&mut self, target: PolicyEngineTarget) -> PolicyEngineResult {
+        let filepath;
+
+        if let PolicyEngineTargetType::Pid = target.1 {
+            filepath = self.canonical_path(&target.0.clone());
+        } else {
+            filepath = target.0.clone();
+        }
+
         // calculate a signature using file metadata
-        let uniq_sig = CacheSignature::new(&proc_pid_path);
+        let uniq_sig = CacheSignature::new(&target.0);
 
         // check if the signature is in the cache
         match self.cache.find(uniq_sig.to_string()) {
@@ -291,14 +322,6 @@ impl PolicyEngine {
                 // get the reason for the decision
                 let reason = PolicyDecisionReason::from(hash_state);
 
-                // check whether we need to kill the process
-                match decision {
-                    PolicyDecision::Block => {
-                        self.kill(String::from(t_pid), reason);
-                    },
-                    _ => {},
-                }
-
                 // return the result
                 PolicyEngineResult { filepath, hash: String::from(hash), decision, reason }
             },
@@ -306,7 +329,7 @@ impl PolicyEngine {
             // Cache Miss
             None => {
                 // do the hash operation
-                let hash = self.hash(&proc_pid_path);
+                let hash = self.hash(&target.0);
 
                 // insert the entry into the cache
                 self.cache.insert(uniq_sig.to_string(), hash.clone());
@@ -315,13 +338,6 @@ impl PolicyEngine {
                 let hash_state = self.hash_state(&hash);
                 let decision = self.make_decision(hash_state);
                 let reason = PolicyDecisionReason::from(hash_state);
-
-                // check whether we need to kill the process
-                match decision {
-                    PolicyDecision::Block =>
-                        self.kill(String::from(t_pid), reason),
-                    _ => {},
-                }
 
                 // return the result
                 PolicyEngineResult { filepath, hash, decision, reason }

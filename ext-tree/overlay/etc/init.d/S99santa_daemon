@@ -4,7 +4,7 @@ DAEMON="santa-daemon"
 # and use "-m" to instruct start-stop-daemon to create one.
 start() {
         printf 'Starting %s: ' "$DAEMON"
-        /usr/bin/"$DAEMON" &
+        /usr/bin/"$DAEMON" -d
         status=$?
         if [ "$status" -eq 0 ]; then
                 echo "OK"
