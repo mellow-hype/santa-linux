@@ -40,7 +40,7 @@ fn worker_loop() -> Result<(), Box<dyn Error>> {
                 // No errors on the recv(), lets check if we got a message
                 if let Some((cmd, payload)) = res {
                     match cmd {
-                        NlSantaCommand::Msg => {
+                        NlSantaCommand::MsgDoHash => {
                             // get an answer
                             let target = PolicyEngineTarget::from(payload.clone());
                             let answer = daemon.engine.analyze(target);

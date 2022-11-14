@@ -24,10 +24,9 @@ pub enum NlSantaCommand {
     // We expect MSG commands to have NlSantaAttribute:Msg
     Msg = 1,        // Generic message type (string)
     MsgCheckin = 2, // Checkin from agent (string)
-    MsgGetPid = 3,  // Command for GetPID
+    MsgDoHash = 3, // Checkin from agent (string)
     MsgHashDone = 4,// Agent finished hash operation
     ReplyWithNlmsgErr = 5,
-    MsgGetRules = 6,
 }
 // Implement necessary trait for the neli lib on the NlSantaCommand enum.
 impl neli::consts::genl::Cmd for NlSantaCommand{}
@@ -40,8 +39,6 @@ pub enum NlSantaAttribute {
     Unspec = 0,
     // We expect MSG attributes to be NULL terminated C strings
     Msg = 1,
-    MsgCheckin = 2,
-    MsgHashDone = 3,
 }
 // Implement necessary trait for the neli lib on the NlSantaAttribute enum.
 impl neli::consts::genl::NlAttrType for NlSantaAttribute{}
