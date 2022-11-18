@@ -1,10 +1,10 @@
-use std::collections::VecDeque;
 use std::fs;
+use std::collections::VecDeque;
 use std::time::SystemTime;
-use std::collections::HashMap;
+use std::error::Error;
 use std::os::linux::fs::MetadataExt;
 
-use std::error::Error;
+use rustc_hash::FxHashMap;
 
 /// SantaCacheSignature
 #[derive(Clone, Eq, PartialEq)]
@@ -50,7 +50,7 @@ impl CacheSignature {
 /// SantaCache struct
 pub struct SantaCache {
     // this is the actual cache that will be searched against
-    buffer: HashMap<String, String>,
+    buffer: FxHashMap<String, String>,
     // each time we insert a new item into the hashmap, push its key to the back of this vec.
     keyvec: VecDeque<String>,
     // max size of the cache
@@ -66,7 +66,7 @@ impl SantaCache {
     /// Create a new SantaCache instance with a given max capacity
     pub fn new(capacity: usize) -> SantaCache {
         SantaCache {
-            buffer: HashMap::new(),
+            buffer: FxHashMap::default(),
             keyvec: VecDeque::with_capacity(capacity),
             capacity,
         }
@@ -78,8 +78,8 @@ impl SantaCache {
     }
 
     /// Search the cache for the given key
-    pub fn find(&self, sig: String) -> Option<&String> {
-        self.buffer.get(&sig)
+    pub fn find(&self, sig: &str) -> Option<&String> {
+        self.buffer.get(sig)
     }
 
     /// Insert an item into the cache, taking care of managing the queue and removing entries as
@@ -95,7 +95,7 @@ impl SantaCache {
         // we have to know whether we need to remove entries
         if self.keyvec.len() == self.capacity {
             // pop the oldest signature from the front of the queue
-            let remove_key = self.keyvec.pop_front().unwrap_or(String::new());
+            let remove_key = self.keyvec.pop_front().unwrap_or("".to_string());
 
             // now we use the key we popped from the keyvec to remove the hashmap entry
             self.buffer.remove(&remove_key);
