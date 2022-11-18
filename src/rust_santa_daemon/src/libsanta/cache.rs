@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::{fs};
+use std::fs;
 use std::time::SystemTime;
 use std::collections::HashMap;
 use std::os::linux::fs::MetadataExt;
@@ -14,8 +14,8 @@ pub struct CacheSignature {
     pub last_mod: u64,
     pub created: u64,
 }
-impl CacheSignature {
-    pub fn to_string(&self) -> String {
+impl ToString for CacheSignature {
+    fn to_string(&self) -> String {
         let uniq_sig = format!("{}||{}||{}",self.last_mod, self.inode, self.created);
         String::from(&uniq_sig)
     }

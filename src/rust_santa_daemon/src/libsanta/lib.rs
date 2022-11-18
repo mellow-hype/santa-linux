@@ -1,9 +1,8 @@
-pub mod netlink;
 pub mod uxpc;
-pub mod engine;
 pub mod commands;
 pub mod consts;
-mod cache;
+pub mod engine_types;
+pub mod cache;
 
 use std::fmt;
 use serde::Serialize;
@@ -12,7 +11,6 @@ use consts::{SANTACTL_NAME, SANTAD_NAME};
 
 /// SantaMode Enum
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 pub enum SantaMode {
     Lockdown,
     Monitor,

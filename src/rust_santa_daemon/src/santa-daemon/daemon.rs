@@ -1,16 +1,18 @@
-use libsanta::consts::{SANTA_BASE_PATH, XPC_SOCKET_PATH};
-use libsanta::netlink::{NetlinkAgent, NlSantaCommand};
-use libsanta::engine::PolicyEngine;
-use libsanta::SantaMode;
-use libsanta::uxpc::{SantaXpcServer};
 use std::path::Path;
 use std::error::Error;
+use libsanta::{
+    consts::{SANTA_BASE_PATH, XPC_SOCKET_PATH},
+    SantaMode,
+    uxpc::SantaXpcServer,
+};
 
+use crate::engine::SantaEngine;
+use crate::netlink::{NetlinkAgent, NlSantaCommand};
 
 /// SantaDaemon object
 pub struct SantaDaemon {
     pub netlink: NetlinkAgent,
-    pub engine: PolicyEngine,
+    pub engine: SantaEngine,
     pub xpc_rx: SantaXpcServer,
 }
 
@@ -25,7 +27,7 @@ impl SantaDaemon {
 
         let mut daemon = SantaDaemon {
             netlink: NetlinkAgent::new(Some(0), &[])?,
-            engine: PolicyEngine::new(mode, 1000),
+            engine: SantaEngine::new(mode, 1000),
             xpc_rx: SantaXpcServer::new(String::from(XPC_SOCKET_PATH), true),
         };
         daemon.init()?;
