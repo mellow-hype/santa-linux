@@ -220,11 +220,13 @@ Options:
 ```
 Analyze and get info on a target file
 
-Usage: santactl fileinfo --path <PATH>
+Usage: santactl fileinfo <PATH>
+
+Arguments:
+  <PATH>
 
 Options:
-  -p, --path <PATH>
-  -h, --help         Print help information
+  -h, --help  Print help information
 ```
 
 ```bash
