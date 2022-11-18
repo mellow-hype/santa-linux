@@ -1,23 +1,33 @@
 /// Rust implementation of the Santa daemon
 mod daemon;
-use daemon::SantaDaemon;
-use libsanta::commands::RuleAction;
-
+mod netlink;
+mod engine;
 use std::error::Error;
 use std::fs::OpenOptions;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use daemonize::Daemonize;
 use clap::Parser;
 
+use daemon::SantaDaemon;
+use netlink::NlSantaCommand;
+
 use libsanta::{SantaMode, Loggable, LoggerSource, Jsonify};
 use libsanta::{
-    netlink::NlSantaCommand,
-    commands::{SantaCtlCommand, RuleCommand, FileInfoCommand, CommandTypes},
-    engine::{PolicyDecision, PolicyEngineTarget},
+    consts::{SANTAD_NAME, XPC_CLIENT_PATH},
     uxpc::SantaXpcClient,
-    consts::{SANTAD_NAME, XPC_CLIENT_PATH, SANTA_LOG, SANTA_ERRLOG},
+    engine_types::{PolicyDecision, PolicyEnginePathTarget},
+    commands::{SantaCtlCommand,
+        RuleCommand,
+        FileInfoCommand,
+        CommandTypes,
+        RuleAction,
+        RuleCommandInputType,
+    },
 };
+
+pub const SANTA_LOG: &str = "/var/log/santad.log";
+pub const SANTA_ERRLOG: &str = "/var/log/santad_err.log";
 
 /// santa-daemon
 #[derive(Parser)]
@@ -41,8 +51,16 @@ fn worker_loop() -> Result<(), Box<dyn Error>> {
                 if let Some((cmd, payload)) = res {
                     match cmd {
                         NlSantaCommand::MsgDoHash => {
+                            // parse the pid from the payload
+                            let pid: u32 = match payload.parse() {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    eprintln!("Failed to parse PID from payload");
+                                    continue
+                                }
+                            };
+                            let target = PolicyEnginePathTarget::from(pid);
                             // get an answer
-                            let target = PolicyEngineTarget::from(payload.clone());
                             let answer = daemon.engine.analyze(target);
                             // log the answer
                             answer.log(LoggerSource::SantaDaemon);
@@ -65,16 +83,23 @@ fn worker_loop() -> Result<(), Box<dyn Error>> {
         if let Some(data) = daemon.xpc_rx.recv() {
             if let Ok(_asdf) = serde_json::from_str::<SantaCtlCommand>(&data) {
                 match _asdf.ctype {
+                    // Status command
                     CommandTypes::Status => {
-                        let status = daemon.engine.get_status().jsonify_pretty();
+                        let status = daemon.engine.status().jsonify_pretty();
                         let mut xclient = SantaXpcClient::new(String::from(XPC_CLIENT_PATH));
                         if let Err(err) = xclient.send(status.as_bytes()) {
                             eprintln!("{SANTAD_NAME}: Failed to send message to XPC client - {err}")
                         }
                     },
+                    // Fileinfo command
                     CommandTypes::FileInfo => {
                         if let Ok(cmd) = serde_json::from_str::<FileInfoCommand>(&_asdf.command) {
-                            let target = PolicyEngineTarget::from(cmd.path);
+                            let path = PathBuf::from(&cmd.path);
+                            if !path.exists() {
+                                eprintln!("{SANTAD_NAME}:FileInfoHandler | File not found - {}", cmd.path.display());
+                                continue;
+                            }
+                            let target = PolicyEnginePathTarget::FilePath(path);
                             let answer = daemon.engine.analyze(target).jsonify_pretty();
                             let mut xclient = SantaXpcClient::new(String::from(XPC_CLIENT_PATH));
                             if let Err(err) = xclient.send(answer.as_bytes()) {
@@ -84,18 +109,40 @@ fn worker_loop() -> Result<(), Box<dyn Error>> {
                             eprintln!("Invalid message format for FileInfoCommand: {}", _asdf.command)
                         }
                     },
+                    // Rule command
                     CommandTypes::Rule => {
                         if let Ok(_cmd) = serde_json::from_str::<RuleCommand>(&_asdf.command) {
                             let msg;
                             match _cmd.action {
+                                // Insert rules command
                                 RuleAction::Insert => {
-                                    daemon.engine.add_rule(&_cmd.hash, _cmd.policy);
-                                    msg = format!("Inserted {} rule for hash {}", _cmd.policy, _cmd.hash);
+                                    daemon.engine.add_rule(_cmd.target.clone(), _cmd.policy);
+                                    match _cmd.target {
+                                        RuleCommandInputType::Hash(h) => {
+                                            msg = format!("Inserted {} rule for hash {}", _cmd.policy, h);
+                                        },
+                                        RuleCommandInputType::Path(p) => {
+                                            msg = format!(
+                                                "Inserted {} rule for file at path {}", _cmd.policy, p.display()
+                                            );
+                                        },
+                                    }
                                 },
+                                // Remove rules command
                                 RuleAction::Remove => {
-                                    daemon.engine.remove_rule(&_cmd.hash);
-                                    msg = format!("Inserted {} rule for hash {}", _cmd.policy, _cmd.hash);
+                                    daemon.engine.remove_rule(_cmd.target.clone());
+                                    match _cmd.target {
+                                        RuleCommandInputType::Hash(h) => {
+                                            msg = format!("Removed rule for hash {}", h);
+                                        },
+                                        RuleCommandInputType::Path(p) => {
+                                            msg = format!(
+                                                "Removed {} rule for file at path {}", _cmd.policy, p.display()
+                                            );
+                                        },
+                                    }
                                 },
+                                // Show rules command
                                 RuleAction::Show => {
                                     msg = daemon.engine.rules.jsonify_pretty();
                                 },
@@ -122,10 +169,11 @@ fn worker_loop() -> Result<(), Box<dyn Error>> {
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse command-line args
     let args = Cli::parse();
+    println!("{SANTAD_NAME}: Entering main message processing loop...");
 
     // determine whether we should fork to the background or run normally
-    println!("{SANTAD_NAME}: Entering main message processing loop...");
     if args.daemonize {
+        // stderr output file
         let stderr_path = Path::new(SANTA_ERRLOG);
         let stderr = match OpenOptions::new().append(true).create(true).open(stderr_path) {
             Ok(file) => {file},
@@ -135,6 +183,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             },
         };
 
+        // stdout output file
         let stdout_path = Path::new(SANTA_LOG);
         let stdout = match OpenOptions::new().append(true).create(true).open(stdout_path) {
             Ok(file) => {file},
@@ -145,21 +194,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
 
         // create the daemon instance with stdout/stderr redirection
-        let daemonized = Daemonize::new()
+        let daemonized = Daemonize::
+            new()
             .stderr(stderr)
             .stdout(stdout);
-
+        
+        // start up
         match daemonized.start() {
             Ok(_) => {
-                // do stuff forever
                 println!("Successfully daemonized the santad process...");
-                worker_loop().unwrap();
+                if let Err(err) = worker_loop() {
+                    eprintln!("Error encountered during the main processing loop: {err}");
+                }
             }
             Err(err) => eprintln!("Failed to daemonize the process: {err}"),
         };
     } else {
-        // do stuff forever
-        worker_loop().unwrap();
+        // we're not daemoizing, do stuff forever
+        if let Err(err) = worker_loop() {
+            eprintln!("Error encountered during the main processing loop: {err}");
+        }
     }
 
     Ok(())

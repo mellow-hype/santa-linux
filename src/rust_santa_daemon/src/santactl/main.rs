@@ -1,13 +1,50 @@
-use std::time::Duration;
 use std::thread;
+use std::{time::Duration, path::PathBuf};
 use clap::{Parser, Subcommand};
 
 // Local imports
-use libsanta::Jsonify;
-use libsanta::consts::{XPC_SOCKET_PATH, XPC_CLIENT_PATH};
-use libsanta::engine::PolicyRule;
-use libsanta::uxpc::{SantaXpcClient, SantaXpcServer};
-use libsanta::commands::{CommandTypes, SantaCtlCommand, RuleAction, StatusCommand, FileInfoCommand, RuleCommand};
+use libsanta::{
+    Jsonify,
+    consts::{XPC_SOCKET_PATH, XPC_CLIENT_PATH},
+    engine_types::PolicyRule,
+    uxpc::{SantaXpcClient, SantaXpcServer},
+    commands::{
+        CommandTypes,
+        SantaCtlCommand,
+        RuleAction,
+        StatusCommand,
+        FileInfoCommand,
+        RuleCommandInputType,
+        RuleCommand
+    },
+};
+
+#[allow(dead_code)]
+fn sender_msg_thread<T: Jsonify>(msg: T) {
+    // create the client socket and send the message
+    let mut client = SantaXpcClient::new(String::from(XPC_SOCKET_PATH));
+    let serial_bytes = msg.jsonify();
+    client.send(serial_bytes.as_bytes()).unwrap();
+
+    // sleep to give the listener a chance to recv the message
+    thread::sleep(Duration::from_millis(50));
+}
+
+// Validator for sha256 hash strings given in args
+fn hash_validator(s: &str) -> Result<String, String> {
+    if s.len() > 64 {
+        return Err("Invalid hash: too long".to_string());
+    } else if s.len() < 64 {
+        return Err("Invalid hash: too short".to_string());
+    }
+    let x = "abcdef1234567890ABCDEF";
+    for hash_c in s.chars() {
+        if !x.contains(hash_c) {
+            return Err("Invalid character in hash".to_string())
+        }
+    }
+    Ok(s.to_string())
+}
 
 /// santactl is used to interact with the santa-daemon
 #[derive(Parser)]
@@ -17,32 +54,14 @@ struct Cli {
     command: SubCommands,
 }
 
-#[derive(Subcommand)]
-pub enum RuleSubCommands {
-    /// Show rules
-    Show,
-    /// Insert rules
-    Insert {
-        /// Rule type
-        #[arg(value_enum)]
-        rule: PolicyRule,
-        /// SHA256 hash
-        hash: String,
-    },
-    /// Delete rules
-    Delete {
-        hash: String,
-    },
-}
-
+// Top-level Santactl subcommands
 #[derive(Subcommand)]
 pub enum SubCommands {
     /// Get status info from the daemon
     Status,
     /// Analyze and get info on a target file
     Fileinfo {
-        #[arg(short, long)]
-        path: String,
+        path: PathBuf,
     },
     /// Manage the daemon's ruleset
     Rule {
@@ -51,15 +70,39 @@ pub enum SubCommands {
     }
 }
 
-#[allow(dead_code)]
-fn sender_thread_v2<T: Jsonify>(msg: T) {
-    // create the client socket and send the message
-    let mut client = SantaXpcClient::new(String::from(XPC_SOCKET_PATH));
-    let serial_bytes = msg.jsonify();
-    client.send(serial_bytes.as_bytes()).unwrap();
-
-    // sleep to give the listener a chance to recv the message
-    thread::sleep(Duration::from_millis(50));
+// Santactl rule subcommands
+#[derive(Subcommand)]
+pub enum RuleSubCommands {
+    /// Show rules
+    Show,
+    /// Insert a rule
+    #[command(group(clap::ArgGroup::new("ver")
+        .required(true)
+        .args(["block", "allow"])
+        ),
+        group(clap::ArgGroup::new("ver2")
+            .required(true)
+            .args(["file", "sha"])
+        )
+    )]
+    Insert {
+        /// Create an allow rule
+        #[arg(short, long, action, required=false)]
+        allow: bool,
+        /// Create an block rule
+        #[arg(short, long, action, required=false)]
+        block: bool,
+        /// Insert a rule by hashing the given file
+        #[arg(short, long, required=false, value_parser = clap::value_parser!(PathBuf))]
+        file: Option<PathBuf>,
+        /// Insert a rule for a SHA256 hash
+        #[arg(short, long, value_name="SHA256", required=false, value_parser = hash_validator)]
+        sha: Option<String>,
+    },
+    /// Remove a rule
+    Remove {
+        hash: String,
+    },
 }
 
 fn main() {
@@ -74,7 +117,12 @@ fn main() {
             };
         }
         SubCommands::Fileinfo { path } => {
-            let fileinfo = FileInfoCommand { path: String::from(path)};
+            if !path.exists() {
+                eprintln!("Path not found: {}\n", path.display());
+                return
+            }
+            
+            let fileinfo = FileInfoCommand { path: path.to_owned() };
             cmd = SantaCtlCommand {
                 ctype: CommandTypes::FileInfo,
                 command: fileinfo.jsonify(),
@@ -82,22 +130,44 @@ fn main() {
         }
         SubCommands::Rule { action } => {
             match action {
-                RuleSubCommands::Insert { hash, rule } => {
-                    let rulecmd = RuleCommand {
-                        action: RuleAction::Insert,
-                        hash: String::from(hash),
-                        policy: *rule,
-                    };
-                    cmd = SantaCtlCommand {
-                        ctype: CommandTypes::Rule,
-                        command: rulecmd.jsonify(),
-                    }
+                // Insert rule command
+                RuleSubCommands::Insert { file: path, sha: hash, allow, block:_ } => {
+                    if let Some(p) = path {
+                        // we have to have been given a path
+                        if !p.exists() {
+                            eprintln!("Path not found: {}", p.display());
+                            return
+                        }
+                        let rulecmd = RuleCommand {
+                            action: RuleAction::Insert,
+                            target: RuleCommandInputType::Path(p.clone()),
+                            policy: (if *allow {PolicyRule::Allow} else {PolicyRule::Block}),
+                        };
+                        cmd = SantaCtlCommand {
+                            ctype: CommandTypes::Rule,
+                            command: rulecmd.jsonify(),
+                        }
+                    } else if let Some(h) = hash {
+                        let rulecmd = RuleCommand {
+                            action: RuleAction::Insert,
+                            target: RuleCommandInputType::Hash(h.clone()),
+                            policy: (if *allow {PolicyRule::Allow} else {PolicyRule::Block}),
+                            // policy: *rule,
+                        };
+                        cmd = SantaCtlCommand {
+                            ctype: CommandTypes::Rule,
+                            command: rulecmd.jsonify(),
+                        }
+                    } else {
+                        unreachable!()
+                    } 
                 },
-                RuleSubCommands::Delete { hash } => {
+                // Remove rule command
+                RuleSubCommands::Remove { hash } => {
                     let rule = PolicyRule::Allow; // won't be used
                     let rulecmd = RuleCommand {
                         action: RuleAction::Remove,
-                        hash: String::from(hash),
+                        target: RuleCommandInputType::Hash(String::from(hash)),
                         policy: rule,
                     };
                     cmd = SantaCtlCommand {
@@ -108,7 +178,7 @@ fn main() {
                 RuleSubCommands::Show {} => {
                     let rulecmd = RuleCommand {
                         action: RuleAction::Show,
-                        hash: String::from(""),
+                        target: RuleCommandInputType::Hash(String::from("")),
                         policy: PolicyRule::Allow, // won't be used, but need a value
                     };
                     cmd = SantaCtlCommand {
@@ -120,18 +190,26 @@ fn main() {
         }
     }
 
+    // create the XPC server socket
     let path = String::from(XPC_CLIENT_PATH);
     let server = SantaXpcServer::new(path, false);
+
     // send the command msg in a thread
     thread::spawn(move || {
-        sender_thread_v2(cmd);
+        // create the client socket and send the message
+        let mut client = SantaXpcClient::new(String::from(XPC_SOCKET_PATH));
+        let serial_bytes = cmd.jsonify();
+        client.send(serial_bytes.as_bytes()).unwrap();
+
+        // sleep to give the listener a chance to recv the message
+        thread::sleep(Duration::from_millis(50));
     });
 
     // sleep to give the sender thread a chance to send the message
     thread::sleep(Duration::from_millis(50));
 
     // wait for the response
-    if let Some(asdf) = server.recv() {
-        println!("{asdf}");
+    if let Some(result) = server.recv() {
+        println!("{result}");
     }
 }
