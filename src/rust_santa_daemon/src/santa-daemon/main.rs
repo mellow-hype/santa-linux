@@ -2,15 +2,13 @@
 mod daemon;
 mod netlink;
 mod engine;
+
 use std::error::Error;
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
 use daemonize::Daemonize;
 use clap::Parser;
-
-use daemon::SantaDaemon;
-use netlink::NlSantaCommand;
 
 use libsanta::{SantaMode, Loggable, LoggerSource, Jsonify};
 use libsanta::{
@@ -25,6 +23,8 @@ use libsanta::{
         RuleCommandInputType,
     },
 };
+use daemon::SantaDaemon;
+use netlink::NlSantaCommand;
 
 pub const SANTA_LOG: &str = "/var/log/santad.log";
 pub const SANTA_ERRLOG: &str = "/var/log/santad_err.log";
@@ -52,26 +52,26 @@ fn worker_loop() -> Result<(), Box<dyn Error>> {
                     match cmd {
                         NlSantaCommand::MsgDoHash => {
                             // parse the pid from the payload
-                            let pid: u32 = match payload.parse() {
+                            let pid: i32 = match payload.parse() {
                                 Ok(p) => p,
                                 Err(_) => {
                                     eprintln!("Failed to parse PID from payload");
                                     continue
                                 }
                             };
-                            let target = PolicyEnginePathTarget::from(pid);
+                            let target = PolicyEnginePathTarget::from(pid as u32);
                             // get an answer
-                            let answer = daemon.engine.analyze(target);
+                            let answer = daemon.engine.analyze(&target);
                             // log the answer
                             answer.log(LoggerSource::SantaDaemon);
 
                             // kill the process if it should be blocked
                             if let PolicyDecision::Block = answer.decision {
-                                daemon.engine.kill(String::from(payload));
+                                daemon.engine.kill(pid);
                             }
 
                             // let the kernel know we're done, don't expect a response
-                            daemon.netlink.send_cmd(NlSantaCommand::MsgHashDone, &"")?;
+                            daemon.netlink.send_cmd(&NlSantaCommand::MsgHashDone, &"")?;
                         },
                         _ => eprintln!("{SANTAD_NAME}: received unknown command"),
                     }
@@ -86,7 +86,7 @@ fn worker_loop() -> Result<(), Box<dyn Error>> {
                     // Status command
                     CommandTypes::Status => {
                         let status = daemon.engine.status().jsonify_pretty();
-                        let mut xclient = SantaXpcClient::new(String::from(XPC_CLIENT_PATH));
+                        let mut xclient = SantaXpcClient::new(XPC_CLIENT_PATH);
                         if let Err(err) = xclient.send(status.as_bytes()) {
                             eprintln!("{SANTAD_NAME}: Failed to send message to XPC client - {err}")
                         }
@@ -100,8 +100,8 @@ fn worker_loop() -> Result<(), Box<dyn Error>> {
                                 continue;
                             }
                             let target = PolicyEnginePathTarget::FilePath(path);
-                            let answer = daemon.engine.analyze(target).jsonify_pretty();
-                            let mut xclient = SantaXpcClient::new(String::from(XPC_CLIENT_PATH));
+                            let answer = daemon.engine.analyze(&target).jsonify_pretty();
+                            let mut xclient = SantaXpcClient::new(XPC_CLIENT_PATH);
                             if let Err(err) = xclient.send(answer.as_bytes()) {
                                 eprintln!("{SANTAD_NAME}: Failed to send message to XPC client - {err}")
                             }
@@ -116,7 +116,7 @@ fn worker_loop() -> Result<(), Box<dyn Error>> {
                             match _cmd.action {
                                 // Insert rules command
                                 RuleAction::Insert => {
-                                    daemon.engine.add_rule(_cmd.target.clone(), _cmd.policy);
+                                    daemon.engine.add_rule(&_cmd.target, _cmd.policy);
                                     match _cmd.target {
                                         RuleCommandInputType::Hash(h) => {
                                             msg = format!("Inserted {} rule for hash {}", _cmd.policy, h);
@@ -130,7 +130,7 @@ fn worker_loop() -> Result<(), Box<dyn Error>> {
                                 },
                                 // Remove rules command
                                 RuleAction::Remove => {
-                                    daemon.engine.remove_rule(_cmd.target.clone());
+                                    daemon.engine.remove_rule(&_cmd.target);
                                     match _cmd.target {
                                         RuleCommandInputType::Hash(h) => {
                                             msg = format!("Removed rule for hash {}", h);
@@ -147,7 +147,7 @@ fn worker_loop() -> Result<(), Box<dyn Error>> {
                                     msg = daemon.engine.rules.jsonify_pretty();
                                 },
                             }
-                            let mut xclient = SantaXpcClient::new(String::from(XPC_CLIENT_PATH));
+                            let mut xclient = SantaXpcClient::new(XPC_CLIENT_PATH);
                             if let Err(err) = xclient.send(msg.as_bytes()) {
                                 eprintln!("{SANTAD_NAME}: Failed to send message to XPC client - {err}")
                             }

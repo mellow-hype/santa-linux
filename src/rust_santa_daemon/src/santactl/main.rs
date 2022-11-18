@@ -22,12 +22,12 @@ use libsanta::{
 #[allow(dead_code)]
 fn sender_msg_thread<T: Jsonify>(msg: T) {
     // create the client socket and send the message
-    let mut client = SantaXpcClient::new(String::from(XPC_SOCKET_PATH));
+    let mut client = SantaXpcClient::new(XPC_SOCKET_PATH);
     let serial_bytes = msg.jsonify();
     client.send(serial_bytes.as_bytes()).unwrap();
 
     // sleep to give the listener a chance to recv the message
-    thread::sleep(Duration::from_millis(50));
+    thread::sleep(Duration::from_millis(1));
 }
 
 // Validator for sha256 hash strings given in args
@@ -191,22 +191,21 @@ fn main() {
     }
 
     // create the XPC server socket
-    let path = String::from(XPC_CLIENT_PATH);
-    let server = SantaXpcServer::new(path, false);
+    let server = SantaXpcServer::new(XPC_CLIENT_PATH, false);
 
     // send the command msg in a thread
     thread::spawn(move || {
         // create the client socket and send the message
-        let mut client = SantaXpcClient::new(String::from(XPC_SOCKET_PATH));
+        let mut client = SantaXpcClient::new(XPC_SOCKET_PATH);
         let serial_bytes = cmd.jsonify();
         client.send(serial_bytes.as_bytes()).unwrap();
 
         // sleep to give the listener a chance to recv the message
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(1));
     });
 
     // sleep to give the sender thread a chance to send the message
-    thread::sleep(Duration::from_millis(50));
+    thread::sleep(Duration::from_millis(1));
 
     // wait for the response
     if let Some(result) = server.recv() {

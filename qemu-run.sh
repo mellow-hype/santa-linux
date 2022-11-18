@@ -8,9 +8,9 @@ fi
 IMAGE_DIR="$1"
 
 qemu-system-x86_64                                                                      \
-        -m 512M                                                                         \
+        -m 1G                                                                         \
         -M pc                                                                           \
-        -cpu qemu64                                                                     \
+        -cpu qemu64                                                                       \
         -kernel ${IMAGE_DIR}/bzImage                                                    \
         -drive file="${IMAGE_DIR}"/rootfs.ext2,if=virtio,format=raw                     \
         -append "rw nokaslr panic=1 root=/dev/vda console=tty1 console=ttyS0"           \

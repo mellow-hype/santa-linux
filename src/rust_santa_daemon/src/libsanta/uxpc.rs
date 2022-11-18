@@ -9,7 +9,7 @@ pub struct SantaXpcServer {
     rx: UnixListener,
 }
 impl SantaXpcServer {
-    pub fn new(path: String, nonblocking: bool) -> SantaXpcServer {
+    pub fn new(path: &str, nonblocking: bool) -> SantaXpcServer {
         // set up the socket for receiving commands
         let rx_sockpath = Path::new(&path);
         // delete old socket if it exists
@@ -51,7 +51,7 @@ pub struct SantaXpcClient {
 }
 
 impl SantaXpcClient {
-    pub fn new(path: String) -> SantaXpcClient {
+    pub fn new(path: &str) -> SantaXpcClient {
         // set up the socket connection for sending responses?
         let sockpath = std::path::Path::new(&path);
         // connect the socket

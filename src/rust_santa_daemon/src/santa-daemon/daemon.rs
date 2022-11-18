@@ -28,7 +28,7 @@ impl SantaDaemon {
         let mut daemon = SantaDaemon {
             netlink: NetlinkAgent::new(Some(0), &[])?,
             engine: SantaEngine::new(mode, 1000),
-            xpc_rx: SantaXpcServer::new(String::from(XPC_SOCKET_PATH), true),
+            xpc_rx: SantaXpcServer::new(XPC_SOCKET_PATH, true),
         };
         daemon.init()?;
         Ok(daemon)
@@ -55,7 +55,7 @@ impl SantaDaemon {
 
     /// Do check-in with the kernel module
     fn checkin(&mut self) -> Result<(), Box<dyn Error>> {
-        self.netlink.send_cmd(NlSantaCommand::MsgCheckin, &"")?;
+        self.netlink.send_cmd(&NlSantaCommand::MsgCheckin, &"")?;
         self.netlink.recv()?;
         Ok(())
     }
