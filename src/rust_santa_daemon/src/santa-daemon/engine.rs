@@ -1,11 +1,11 @@
 // std imports
 use std::{io, fs};
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use nix::sys::signal;
 use nix::unistd::Pid;
 use sha2::{Sha256, Digest};
+use rustc_hash::FxHashMap;
 
 // local imports
 use crate::{SantaMode, Jsonify};
@@ -17,7 +17,7 @@ use serde::{Serialize, Deserialize};
 
 
 /// Read the default rules database file
-pub fn read_rules_db_file() -> Result<HashMap<String, PolicyRule>, String> {
+pub fn read_rules_db_file() -> Result<FxHashMap<String, PolicyRule>, String> {
     // Read the file
     if let Ok(rules_json) = fs::read_to_string(RULES_DB_PATH) {
         // Read the JSON contents of the file as a hashmap.
@@ -37,14 +37,20 @@ pub fn read_rules_db_file() -> Result<HashMap<String, PolicyRule>, String> {
 }
 
 /// Calculate the SHA256 hash of the file given in `target`
-pub fn hash_file_at_path(target: PathBuf) -> Option<String> {
+pub fn hash_file_at_path(target: &PathBuf) -> Option<String> {
     // sanity check to make sure file exists
     if !target.exists() { return None }
     // open the file
-    let mut file = fs::File::open(&target).unwrap();
+    let mut file = match fs::File::open(&target) {
+        Ok(f) => f,
+        Err(_) => return None,
+    };
+
     // hash file via Read object, avoid reading the entire file into memory
     let mut hasher = Sha256::new();
-    io::copy(&mut file, &mut hasher).expect("copy the data");
+    if let Err(_) = io::copy(&mut file, &mut hasher) {
+        return None
+    }
     // finalize the calculation (consumes the hasher instance)
     let hash_bytes = hasher.finalize();
     // we're done
@@ -52,7 +58,7 @@ pub fn hash_file_at_path(target: PathBuf) -> Option<String> {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct RulesDb (HashMap<String, PolicyRule>);
+pub struct RulesDb (FxHashMap<String, PolicyRule>);
 impl Jsonify for RulesDb {}
 
 /// PolicyEngine struct
@@ -68,7 +74,7 @@ impl SantaEngine {
     pub fn new(mode: SantaMode, cache_size: usize) -> SantaEngine {
         let mut engine = SantaEngine{
             mode,
-            rules: RulesDb(HashMap::new()),
+            rules: RulesDb(FxHashMap::default()),
             cache: SantaCache::new(cache_size),
         };
 
@@ -85,7 +91,7 @@ impl SantaEngine {
                 }
             }
             // create an empty rules file
-            if let Err(_) = std::fs::File::create(rules_filepath.clone()) {
+            if let Err(_) = std::fs::File::create(rules_filepath.as_path()) {
                 eprintln!("Could not create empty rules file");
             }
             // return, we don't need to read an empty rules db
@@ -102,7 +108,7 @@ impl SantaEngine {
 
     /// Check the rules database for the given hash and return a PolicyDecision based on the
     /// result.
-    fn decision_from_hash_state(&self, state: HashState) -> PolicyDecision {
+    fn decision_from_hash_state(&self, state: &HashState) -> PolicyDecision {
         match state {
             HashState::HashOk => PolicyDecision::Allow,
             HashState::HashBlock => PolicyDecision::Block,
@@ -125,7 +131,7 @@ impl SantaEngine {
 
     /// Return a PolicyDecision for the target pointed to by PolicyEnginePathTarget, only performing 
     /// a hashing operation if the target's signature is not in the hash cache.
-    pub fn analyze(&mut self, target: PolicyEnginePathTarget) -> PolicyEngineResult {
+    pub fn analyze(&mut self, target: &PolicyEnginePathTarget) -> PolicyEngineResult {
 
         // normalize the path and return it as a string
         let filepath = target.canonical_string();
@@ -135,7 +141,7 @@ impl SantaEngine {
             // Skip using the cache if we were unable to generate a cache signature
             Err(_) => {
                 // do the hash operation
-                let hash: String = match hash_file_at_path(target.path()) {
+                let hash: String = match hash_file_at_path(&target.path()) {
                     None => {
                         eprintln!("failed to hash file at path");
                         let decision = PolicyDecision::from(self.mode);
@@ -147,7 +153,7 @@ impl SantaEngine {
 
                 // make a decision
                 let hash_state = self.hash_state(&hash);
-                let decision = self.decision_from_hash_state(hash_state);
+                let decision = self.decision_from_hash_state(&hash_state);
                 let reason = PolicyDecisionReason::from(hash_state);
 
                 // return the result
@@ -157,13 +163,13 @@ impl SantaEngine {
         };
 
         // check if the signature is in the cache
-        match self.cache.find(uniq_sig.to_string()) {
+        match self.cache.find(&uniq_sig.to_string()) {
             // Cache Hit
             Some(hash) => {
                 // we already know the hash for this file, get it's state
                 let hash_state = self.hash_state(hash);
                 // make a decision
-                let decision = self.decision_from_hash_state(hash_state);
+                let decision = self.decision_from_hash_state(&hash_state);
                 // get the reason for the decision
                 let reason = PolicyDecisionReason::from(hash_state);
 
@@ -174,7 +180,7 @@ impl SantaEngine {
             // Cache Miss
             None => {
                 // do the hash operation
-                let hash: String = match hash_file_at_path(target.path()) {
+                let hash: String = match hash_file_at_path(&target.path()) {
                     None => {
                         eprintln!("failed to hash file at path");
                         let decision = PolicyDecision::from(self.mode);
@@ -190,7 +196,7 @@ impl SantaEngine {
 
                 // make a decision
                 let hash_state = self.hash_state(&hash);
-                let decision = self.decision_from_hash_state(hash_state);
+                let decision = self.decision_from_hash_state(&hash_state);
                 let reason = PolicyDecisionReason::from(hash_state);
 
                 // return the result
@@ -200,15 +206,15 @@ impl SantaEngine {
     }
 
     /// Kill a target process by PID
-    pub fn kill(&self, pid: String) {
-        let target: i32 = pid.parse().expect("should have received number");
-        let target_pid = Pid::from_raw(target);
-
-        signal::kill(target_pid, signal::SIGKILL).unwrap();
+    pub fn kill(&self, pid: i32) {
+        let target_pid = Pid::from_raw(pid);
+        if let Err(_) = signal::kill(target_pid, signal::SIGKILL) {
+            eprintln!("Error sending SIGKILL to process with pid {pid}")
+        }
     }
 
     /// Add a new rule
-    pub fn add_rule(&mut self, hash: RuleCommandInputType, rule: PolicyRule) {
+    pub fn add_rule(&mut self, hash: &RuleCommandInputType, rule: PolicyRule) {
         match hash {
             RuleCommandInputType::Hash(val) => {
                 println!("{SANTAD_NAME}: adding {} rule for hash {val}",
@@ -216,7 +222,7 @@ impl SantaEngine {
                 self.rules.0.insert(String::from(val), rule);
             },
             RuleCommandInputType::Path(val) => {
-                if let Some(hash) = hash_file_at_path(val.clone()) {
+                if let Some(hash) = hash_file_at_path(&val) {
                     self.rules.0.insert(String::from(hash), rule);
                 } else {
                     eprintln!("failed to hash file at path: {}", val.display())
@@ -226,14 +232,14 @@ impl SantaEngine {
     }
 
     /// Remove a rule
-    pub fn remove_rule(&mut self, hash: RuleCommandInputType) {
+    pub fn remove_rule(&mut self, hash: &RuleCommandInputType) {
         match hash {
             RuleCommandInputType::Hash(val) => {
                 println!("{SANTAD_NAME}: removing rule for hash {val}");
-                self.rules.0.remove(&val);
+                self.rules.0.remove(val);
             },
             RuleCommandInputType::Path(val) => {
-                if let Some(hash) = hash_file_at_path(val.clone()) {
+                if let Some(hash) = hash_file_at_path(&val) {
                     self.rules.0.remove(&hash);
                 } else {
                     eprintln!("failed to hash file at path: {}", val.display())

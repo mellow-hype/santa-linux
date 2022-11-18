@@ -2,7 +2,6 @@
 use std::fmt;
 use std::path::PathBuf;
 use clap::ValueEnum;
-
 use serde::{Deserialize, Serialize};
 
 // local imports
@@ -36,8 +35,8 @@ pub enum PolicyRule {
 impl fmt::Display for PolicyRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PolicyRule::Allow => write!(f, "Allowlist"),
-            PolicyRule::Block => write!(f, "Blocklist"),
+            PolicyRule::Allow => write!(f, "ALLOW"),
+            PolicyRule::Block => write!(f, "BLOCK"),
         }
     }
 }
@@ -65,9 +64,9 @@ impl From<HashState> for PolicyDecisionReason {
 impl ToString for PolicyDecisionReason {
     fn to_string(&self) -> String {
         match self {
-            PolicyDecisionReason::AllowListed => String::from("ALLOWLISTED"),
-            PolicyDecisionReason::BlockListed => String::from("BLOCKLISTED"),
-            PolicyDecisionReason::Unknown => String::from("UNKNOWN"),
+            PolicyDecisionReason::AllowListed => String::from("allowlisted"),
+            PolicyDecisionReason::BlockListed => String::from("blocklisted"),
+            PolicyDecisionReason::Unknown => String::from("unknown binary"),
             PolicyDecisionReason::Error => String::from("ERROR"),
         }
     }

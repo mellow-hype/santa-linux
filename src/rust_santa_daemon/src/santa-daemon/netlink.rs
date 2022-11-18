@@ -79,7 +79,7 @@ impl NetlinkAgent {
     /// let agent = NetlinkAgent::new(Some(0), &[]);
     /// agent.send_cmd(NlSantaCommand::Msg, "hello")?;
     /// ```
-    pub fn send_cmd(&mut self, command: NlSantaCommand, 
+    pub fn send_cmd(&mut self, command: &NlSantaCommand, 
                     msg_data: &str) -> Result<(), Box<dyn Error>> {
         // set up attributes + payload
         let mut attrs: GenlBuffer<NlSantaAttribute, Buffer> = GenlBuffer::new();
@@ -97,7 +97,7 @@ impl NetlinkAgent {
         // The generic netlink header, contains the attributes (actual data) as payload.
         let genlhdr = Genlmsghdr::new(
             // the custom command we've defined in NlSantaCommand
-            command,
+            command.clone(),
             // this is the custom protocol version, application specific
             NL_SANTA_PROTO,
             // contains the actual payload data
