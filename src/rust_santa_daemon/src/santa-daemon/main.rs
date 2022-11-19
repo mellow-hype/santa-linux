@@ -116,30 +116,40 @@ fn worker_loop() -> Result<(), Box<dyn Error>> {
                             match _cmd.action {
                                 // Insert rules command
                                 RuleAction::Insert => {
-                                    daemon.engine.add_rule(&_cmd.target, _cmd.policy);
+                                    let what_happened = daemon.engine.add_rule(&_cmd.target, _cmd.policy);
                                     match _cmd.target {
-                                        RuleCommandInputType::Hash(h) => {
-                                            msg = format!("Inserted {} rule for hash {}", _cmd.policy, h);
+                                        RuleCommandInputType::Hash(hash) => {
+                                            msg = format!("{} rule for hash {}: {}", 
+                                                          what_happened, hash, _cmd.policy);
                                         },
                                         RuleCommandInputType::Path(p) => {
-                                            msg = format!(
-                                                "Inserted {} rule for file at path {}", _cmd.policy, p.display()
-                                            );
+                                            msg = format!("{} rule for file {}: {}", 
+                                                          what_happened, p.display(), _cmd.policy);
                                         },
                                     }
                                 },
                                 // Remove rules command
                                 RuleAction::Remove => {
-                                    daemon.engine.remove_rule(&_cmd.target);
-                                    match _cmd.target {
-                                        RuleCommandInputType::Hash(h) => {
-                                            msg = format!("Removed rule for hash {}", h);
-                                        },
-                                        RuleCommandInputType::Path(p) => {
-                                            msg = format!(
-                                                "Removed {} rule for file at path {}", _cmd.policy, p.display()
-                                            );
-                                        },
+                                    if let Some(what_happened) = daemon.engine.remove_rule(&_cmd.target){
+                                        match _cmd.target {
+                                            RuleCommandInputType::Hash(hash) => {
+                                                msg = format!("{} rule for hash: {}", 
+                                                            what_happened, hash);
+                                            },
+                                            RuleCommandInputType::Path(p) => {
+                                                msg = format!("{} rule for hash of file: {}", 
+                                                            what_happened, p.display());
+                                            },
+                                        }
+                                    } else {
+                                        match _cmd.target {
+                                            RuleCommandInputType::Hash(hash) => {
+                                                msg = format!("No rule for hash '{}'", hash);
+                                            },
+                                            RuleCommandInputType::Path(p) => {
+                                                msg = format!("No rule for hash of file: {}", p.display());
+                                            },
+                                        }
                                     }
                                 },
                                 // Show rules command

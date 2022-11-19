@@ -39,19 +39,23 @@ fn read_rules_db_file() -> Result<FxHashMap<String, PolicyRule>, String> {
 
 /// Write a RuleDb instance out to the default rules path
 fn write_json_to_file<J: Jsonify>(rules: &J, path: &str) {
-    // serialize the rules to pretty json and write to the file
+    // do some checks to be sure parent dirs all exist before we do fs::write()
     let filepath = PathBuf::from(path);
     if !filepath.exists() {
-        // it doesn't so lets check if the parent directory exists and create it if not
-        let parent = filepath.parent().unwrap();
+        // this expect is safe because the try_exists() call would return true if path was "/"
+        // (which is the only path that would cause the parent() call to fail)
+        let parent = filepath.parent().expect("path should not be /");
         if !parent.exists() {
             if let Err(_) = std::fs::create_dir_all(parent) {
-                eprintln!("Could not create santa directory at {SANTA_BASE_PATH}");
+                eprintln!("{SANTAD_NAME}: Could not create directory at {}", parent.display());
             }
         }
+
     }
+    // serialize the rules to pretty json and write to the file
     let current_rules_json = format!("{}\n", rules.jsonify_pretty());
-    fs::write(path, current_rules_json).expect("parent dirs should exist")
+    // this expect is safe because parent dirs that didn't exist should have been created above
+    fs::write(path, current_rules_json).expect("parent dirs should exist");
 }
 
 /// Calculate the SHA256 hash of the file given in `target`
@@ -237,39 +241,68 @@ impl SantaEngine {
     }
 
     /// Add a new rule
-    pub fn add_rule(&mut self, hash: &RuleCommandInputType, rule: PolicyRule) {
+    pub fn add_rule(&mut self, hash: &RuleCommandInputType, rule: PolicyRule) -> String {
         match hash {
             RuleCommandInputType::Hash(val) => {
                 println!("{SANTAD_NAME}: adding {} rule for hash {val}",
                         PolicyDecision::from(rule).to_string());
-                self.rules.0.insert(String::from(val), rule);
-                self.sync_rules()
+
+                let _ = match self.rules.0.insert(val.to_string(), rule) {
+                    Some(old) => {
+                        // we updated an existing rule
+                        self.sync_rules();
+                        return format!("Updated existing {}", old.to_string())
+                    }, 
+                    None => {
+                        // we inserted a new rule
+                        self.sync_rules();
+                        return "Inserted".to_string()
+                    },
+                };
             },
             RuleCommandInputType::Path(val) => {
                 if let Some(hash) = hash_file_at_path(&val) {
-                    self.rules.0.insert(String::from(hash), rule);
-                    self.sync_rules()
+                    let _ = match self.rules.0.insert(hash.to_string(), rule) {
+                        Some(old) => {
+                            // we updated an existing rule
+                            self.sync_rules();
+                            return format!("Updated existing {}", old)
+                        }, 
+                        None => {
+                            // we inserted a new rule
+                            self.sync_rules();
+                            return "Inserted".to_string()
+                        },
+                    };
                 } else {
-                    eprintln!("failed to hash file at path: {}", val.display())
+                    eprintln!("failed to hash file at path: {}", val.display());
+                    return "Failed to insert".to_string()
                 }
             },
         }
     }
 
     /// Remove a rule
-    pub fn remove_rule(&mut self, hash: &RuleCommandInputType) {
+    pub fn remove_rule(&mut self, hash: &RuleCommandInputType) -> Option<&'static str> {
         match hash {
             RuleCommandInputType::Hash(val) => {
                 println!("{SANTAD_NAME}: removing rule for hash {val}");
-                self.rules.0.remove(val);
-                self.sync_rules()
+                if let Some(_) = self.rules.0.remove(val) {
+                    self.sync_rules();
+                    return Some("Removed")
+                }
+                None
             },
             RuleCommandInputType::Path(val) => {
                 if let Some(hash) = hash_file_at_path(&val) {
-                    self.rules.0.remove(&hash);
-                    self.sync_rules()
+                    if let Some(_) = self.rules.0.remove(&hash) {
+                        self.sync_rules();
+                        return Some("Removed")
+                    }
+                    None
                 } else {
-                    eprintln!("failed to hash file at path: {}", val.display())
+                    eprintln!("failed to hash file at path: {}", val.display());
+                    return Some("Failed to hash file at path while attempting to remove")
                 }
             },
         }
