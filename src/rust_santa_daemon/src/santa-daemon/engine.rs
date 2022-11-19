@@ -17,7 +17,7 @@ use serde::{Serialize, Deserialize};
 
 
 /// Read the default rules database file
-pub fn read_rules_db_file() -> Result<FxHashMap<String, PolicyRule>, String> {
+fn read_rules_db_file() -> Result<FxHashMap<String, PolicyRule>, String> {
     // Read the file
     if let Ok(rules_json) = fs::read_to_string(RULES_DB_PATH) {
         // Read the JSON contents of the file as a hashmap.
@@ -25,15 +25,33 @@ pub fn read_rules_db_file() -> Result<FxHashMap<String, PolicyRule>, String> {
         if let Ok(rules_json) = rules {
             return Ok(rules_json)
         } else {
-            let msg = "Failed to parse JSON to hashmap";
+            let msg = format!("{SANTAD_NAME}: Failed to parse JSON to hashmap");
             eprintln!("{}", msg.to_string());
             Err(msg.to_string())
         }
+    // Something went wrong
     } else {
-        let msg = format!("Failed to read file to string: {RULES_DB_PATH}");
+        let msg = format!("{SANTAD_NAME}: Failed to read file to string: {RULES_DB_PATH}");
         eprintln!("{}", msg);
         Err(msg.to_string())
     }
+}
+
+/// Write a RuleDb instance out to the default rules path
+fn write_json_to_file<J: Jsonify>(rules: &J, path: &str) {
+    // serialize the rules to pretty json and write to the file
+    let filepath = PathBuf::from(path);
+    if !filepath.exists() {
+        // it doesn't so lets check if the parent directory exists and create it if not
+        let parent = filepath.parent().unwrap();
+        if !parent.exists() {
+            if let Err(_) = std::fs::create_dir_all(parent) {
+                eprintln!("Could not create santa directory at {SANTA_BASE_PATH}");
+            }
+        }
+    }
+    let current_rules_json = format!("{}\n", rules.jsonify_pretty());
+    fs::write(path, current_rules_json).expect("parent dirs should exist")
 }
 
 /// Calculate the SHA256 hash of the file given in `target`
@@ -104,6 +122,11 @@ impl SantaEngine {
             // return, we've done what we came here to do
             engine
         }
+    }
+
+    /// Sync the daemon's ruleset back to the rules db file
+    fn sync_rules(&self) {
+        write_json_to_file(&self.rules, RULES_DB_PATH)
     }
 
     /// Check the rules database for the given hash and return a PolicyDecision based on the
@@ -220,10 +243,12 @@ impl SantaEngine {
                 println!("{SANTAD_NAME}: adding {} rule for hash {val}",
                         PolicyDecision::from(rule).to_string());
                 self.rules.0.insert(String::from(val), rule);
+                self.sync_rules()
             },
             RuleCommandInputType::Path(val) => {
                 if let Some(hash) = hash_file_at_path(&val) {
                     self.rules.0.insert(String::from(hash), rule);
+                    self.sync_rules()
                 } else {
                     eprintln!("failed to hash file at path: {}", val.display())
                 }
@@ -237,10 +262,12 @@ impl SantaEngine {
             RuleCommandInputType::Hash(val) => {
                 println!("{SANTAD_NAME}: removing rule for hash {val}");
                 self.rules.0.remove(val);
+                self.sync_rules()
             },
             RuleCommandInputType::Path(val) => {
                 if let Some(hash) = hash_file_at_path(&val) {
                     self.rules.0.remove(&hash);
+                    self.sync_rules()
                 } else {
                     eprintln!("failed to hash file at path: {}", val.display())
                 }
