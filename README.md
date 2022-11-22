@@ -35,17 +35,14 @@ Successfully daemonized the santad process...
 3. Hash Cache: the daemon implements a caching layer to avoid having to re-hash recently hashed files to improve performance. The cache is implemented as a fixed-size FIFO queue, and the oldest entries are only removed once the cache capacity is reached.
 
 ## Known Issues/Limitations
-Extensive testing has not been done yet and this is very much still a proof-of-concept implementation. It's not meant to be functional on a full machine or even useful for anything practical at this point. That being said, there are a couple of known issues worth mentioning and that I plan on fixing:
-
-1. Commands that use pipes (i.e. `cat 123 | grep 123`) trigger the kprobe fault handler and cause errors. I still need to investigate the root cause.
-2. Concurrent executions _may_ cause unknown issues/failures. I haven't done much testing here but there may be issues with syncronizing/handling the kernel completion object used by the module in these cases. 
+Extensive testing has not been done yet and this is very much still a proof-of-concept implementation. It's not meant to be functional on a full machine or even useful for anything practical at this point.
 
 ## TODO & Unimplemented Features
 
-* [] Scope-based rules (i.e. path-based rules)
-* [] Cleaner exception handling in the daemon
-* [] Allow the daemon to re-checkin in case of failures
-* [] Improve IPC validation/authentication between components
+* Scope-based rules (i.e. path-based rules)
+* Cleaner exception handling in the daemon
+* Allow the daemon to re-checkin in case of failures
+* Improve IPC validation/authentication between components
 
 --- 
 
@@ -57,11 +54,11 @@ The sequence of events that take place on each execution and the process that Sa
 ### Kernel
 1. The kernel module hooks calls to the kernel function `finalize_exec()` using a kprobe pre-handler. After a call to an execve variant, this function is called to complete the exec setup process, right before execution is actually handed to the binary’s entry point
     - The module gets the PID of the process that is executing the target binary by reading from `task_struct *current`
-2. The kernel module sends a message containing the target PID to the daemon over a generic netlink socket. A kernel completion is initialized and waits for a response from the daemon without blocking (but still holding execution of the target binary).
-3. The kernel module will eventually receive a special “HASH DONE” message from the daemon which will trigger the completion to be marked as completed. The thread holding the execution fo the target binary is then resumed.
+2. The kernel module sends a message containing the target PID to the daemon over a generic netlink socket.
 
 ### User-Space
 1. The daemon loops indefinitely, processes incoming messages from the kernel. Upon receiving a message it parses the PID from the message payload.
+2. The daemon attaches the the process pointed to by the PID via ptrace and holds execution
 2. The daemon gets the SHA256 hash of the target binary
     - It first calculates a unique signature using file metadata and checks the cache to see if the signature is found. If it is, this hash is used.
     - If the signature was not found in the cache, the daemon calculates the hash by reading from `/proc/<pid>/exe` and performing the shasum operation
@@ -69,8 +66,7 @@ The sequence of events that take place on each execution and the process that Sa
     - If on the allowlist: execution is allowed
     - If on the blocklist: execution is blocked
     - If neither: the file is unknown and the decisions is based on whether Lockdown mode is enabled
-4. If execution should be blocked, the daemon sends a `SIGKILL` signal to the target PID
-5. The daemon sends an ack message to the kernel to mark the completion as complete and allow the kernel to resume exec of the target binary (assuming it wasn't killed)
+4. If execution should be blocked, the daemon sends a `SIGKILL` signal to the target PID. Otherwise the daemon detaches from the process and execution is allowed to proceed.
 
 ## Components
 ### Kernel Module

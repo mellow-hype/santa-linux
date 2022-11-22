@@ -4,11 +4,9 @@ use std::error::Error;
 pub const NL_SANTA_PROTO: u8 = 30;
 pub const NL_SANTA_FAMILY_NAME: &str = "gnl_santa";
 
-// neli import for Netlink support
-#[allow(unused_imports)]
 use neli::{
-    consts::{genl::*, nl::*, socket::*},
     neli_enum,
+    consts::{nl::*, socket::*},
     genl::{Genlmsghdr, Nlattr},
     nl::{Nlmsghdr, NlPayload},
     socket::NlSocketHandle,
@@ -54,10 +52,6 @@ pub struct NetlinkAgent {
 /// NetlinkAgent implementation.
 impl NetlinkAgent {
     /// Create a new instance of a NetlinkAgent.
-    /// Example:
-    /// ```
-    /// let agent = NetlinkAgent::new(Some(0), &[]);
-    /// ```
     pub fn new(pid: Option<u32>, groups: &[u32]) -> Result<NetlinkAgent, Box<dyn Error>> {
         // create and bind the socket
         let mut socket = NlSocketHandle::connect(
@@ -74,11 +68,6 @@ impl NetlinkAgent {
 
     /// Send a specific `NlSantaCommand` and message payload via Netlink; the socket handle passed
     /// in should already be initialized and bound using `NlSocketHandle::connect()`.
-    /// Example:
-    /// ```
-    /// let agent = NetlinkAgent::new(Some(0), &[]);
-    /// agent.send_cmd(NlSantaCommand::Msg, "hello")?;
-    /// ```
     pub fn send_cmd(&mut self, command: &NlSantaCommand, 
                     msg_data: &str) -> Result<(), Box<dyn Error>> {
         // set up attributes + payload
@@ -121,15 +110,6 @@ impl NetlinkAgent {
     }
 
     /// Receive a netlink message using the opened socket
-    /// Example:
-    /// ```
-    /// let agent = NetlinkAgent::new(Some(0), &[]);
-    /// let res = agent.recv().unwrap();
-    /// let msg = res.get_payload().unwrap();
-    /// let attr_handle = msg.get_attr_handle().unwrap();
-    /// let payload_data = attr_handle.
-    ///     get_attr_payload_as_with_len::<String>(NlSantaAttribute::Msg).unwrap();
-    /// ```
     pub fn recv(&mut self)
                 -> Result<Option<(NlSantaCommand, String)>, String> {
         // If the socket is in non-blocking mode the Result'ing Option may be None if no

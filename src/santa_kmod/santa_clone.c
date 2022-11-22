@@ -31,9 +31,6 @@
  */
 static int agent_pid = -1;
 /* Completion object used to hold execs while the daemon sends back a response */
-static DECLARE_COMPLETION(hash_done);
-static DEFINE_SPINLOCK(exec_lock);
-
 
 /**
  * ================================================================================================
@@ -384,10 +381,6 @@ int gnl_cb_santa_hash_done_doit(struct sk_buff *sender_skb, struct genl_info *in
         pr_err("[%s]: message doesn't appear to be from the daemon, ignoring\n", KMOD_NAME);
         return 0;
     }
-    // Trigger the completion to let the kprobe resume
-    spin_lock(&exec_lock);;
-    complete(&hash_done);
-    spin_unlock(&exec_lock);;
     return 0;
 }
 
@@ -403,7 +396,7 @@ int gnl_cb_doit_reply_error(struct sk_buff *sender_skb, struct genl_info *info) 
  * CUSTOM GNL SANTA send_cmd()
  * ====================
 */
-static int gnl_santa_send_cmd(SantaCommand_t cmd, char *msg) {
+static int gnl_santa_send_cmd(char *msg) {
     struct sk_buff *reply_skb;
     void *msg_head;
     int rc;
@@ -428,7 +421,7 @@ static int gnl_santa_send_cmd(SantaCommand_t cmd, char *msg) {
             0, // sequence number: int (might be used by receiver, but not mandatory)
             &gnl_santa_family, // struct genl_family *
             0, // flags for Netlink header: int; application specific and not mandatory
-            cmd // the command/op from the GNL_SANTA_COMMAND enum
+            GNL_SANTA_C_MSG_DO_HASH // the command/op from the GNL_SANTA_COMMAND enum
     );
     if (msg_head == NULL) {
         rc = ENOMEM;
@@ -478,22 +471,20 @@ static struct kprobe kpr = { .symbol_name = symbol,};
  */
 static int handler_pre_finalize_exec(struct kprobe *p, struct pt_regs *regs)
 {
-    char msg[MAX_PAYLOAD+4+1];
-    memset(msg, 0, sizeof(msg));
-    snprintf(msg, sizeof(msg), "%d", current->pid);
+    // check if we know the agent PID yet, bail if not
+    if (agent_pid < 0) {
+        pr_err("[%s]: daemon hasn't checked in yet, skipping...\n", KMOD_NAME);
+        return 0;
+    }
 
     // send the message to the daemon
-    SantaCommand_t cmd = GNL_SANTA_C_MSG_DO_HASH;
-    int res = gnl_santa_send_cmd(cmd, msg);
+    char msg[16] = {0};
+    snprintf(msg, sizeof(msg), "%d", current->pid);
+    int res = gnl_santa_send_cmd(msg);
     if (res != 0) {
         pr_err("[%s]: ERROR %s() ret=%d\n", KMOD_NAME, __func__, res);
         return 0;
     }
-    // hold until we get a response from the daemon?
-    wait_for_completion(&hash_done);
-    spin_lock(&exec_lock);;
-    reinit_completion(&hash_done);
-    spin_unlock(&exec_lock);;
     return 0;
 }
 
