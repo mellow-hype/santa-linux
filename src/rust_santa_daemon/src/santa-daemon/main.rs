@@ -3,10 +3,12 @@ mod daemon;
 mod netlink;
 mod engine;
 mod tracer;
+mod cache;
 
 use std::error::Error;
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
+use libsanta::commands::{SantaCtlCommand, CommandTypes};
 use nix::sys::wait::{WaitStatus, self};
 
 use daemonize::Daemonize;
@@ -43,96 +45,103 @@ struct Cli {
 // Check for a uxpc message and handle it if there is one
 fn santactl_worker(mut daemon: SantaDaemon) -> SantaDaemon {
     if let Some(data) = daemon.xpc_rx.recv() {
-        if let Ok(cmd) = serde_json::from_str::<RuleCommand>(&data) {
-            let msg;
-            match cmd.action {
-                // Insert rules command
-                RuleAction::Insert => {
-                    let what_happened = daemon.engine.add_rule(&cmd.target, cmd.policy);
-                    match cmd.target {
-                        RuleCommandInputType::Hash(hash) => {
-                            msg = format!(
-                                "{} rule for hash {}: {}", 
-                                what_happened, hash, cmd.policy
-                            );
-                        },
-                        RuleCommandInputType::Path(p) => {
-                            msg = format!(
-                                "{} rule for file {}: {}", 
-                                what_happened, p.display(), cmd.policy
-                            );
-                        },
-                    }
-                },
-                // Remove rules command
-                RuleAction::Remove => {
-                    if let Some(what_happened) = 
-                        daemon.engine.remove_rule(&cmd.target) {
-                            match cmd.target {
-                                RuleCommandInputType::Hash(hash) => {
-                                    msg = format!(
-                                        "{} rule for hash: {}", what_happened, hash);
-                                },
-                                RuleCommandInputType::Path(p) => {
-                                    msg = format!(
-                                        "{} rule for hash of file: {}", 
-                                        what_happened, p.display()
-                                    );
-                                },
-                            }
-                    } else {
-                        match cmd.target {
-                            RuleCommandInputType::Hash(hash) => {
-                                msg = format!("No rule for hash '{}'", hash);
+        if let Ok(payload) = serde_json::from_str::<SantaCtlCommand>(&data) {
+            match &payload.ctype {
+                CommandTypes::Rule => {
+                    if let Ok(cmd) = serde_json::from_str::<RuleCommand>(&payload.command) {
+                        let msg;
+                        match cmd.action {
+                            // Insert rules command
+                            RuleAction::Insert => {
+                                let what_happened = daemon.engine.add_rule(&cmd.target, cmd.policy);
+                                match cmd.target {
+                                    RuleCommandInputType::Hash(hash) => {
+                                        msg = format!(
+                                            "{} rule for hash {}: {}", 
+                                            what_happened, hash, cmd.policy
+                                        );
+                                    },
+                                    RuleCommandInputType::Path(p) => {
+                                        msg = format!(
+                                            "{} rule for file {}: {}", 
+                                            what_happened, p.display(), cmd.policy
+                                        );
+                                    },
+                                }
                             },
-                            RuleCommandInputType::Path(p) => {
-                                msg = format!(
-                                    "No rule for hash of file: {}", p.display()
-                                );
+                            // Remove rules command
+                            RuleAction::Remove => {
+                                if let Some(what_happened) = 
+                                    daemon.engine.remove_rule(&cmd.target) {
+                                        match cmd.target {
+                                            RuleCommandInputType::Hash(hash) => {
+                                                msg = format!(
+                                                    "{} rule for hash: {}", what_happened, hash);
+                                            },
+                                            RuleCommandInputType::Path(p) => {
+                                                msg = format!(
+                                                    "{} rule for hash of file: {}", 
+                                                    what_happened, p.display()
+                                                );
+                                            },
+                                        }
+                                } else {
+                                    match cmd.target {
+                                        RuleCommandInputType::Hash(hash) => {
+                                            msg = format!("No rule for hash '{}'", hash);
+                                        },
+                                        RuleCommandInputType::Path(p) => {
+                                            msg = format!(
+                                                "No rule for hash of file: {}", p.display()
+                                            );
+                                        },
+                                    }
+                                }
+                            },
+                            // Show rules command
+                            RuleAction::Show => {
+                                msg = daemon.engine.rules.jsonify_pretty();
                             },
                         }
+                        let mut xclient = SantaXpcClient::new(XPC_CLIENT_PATH);
+                        if let Err(err) = xclient.send(msg.as_bytes()) {
+                            eprintln!(
+                                "{SANTAD_NAME}: Failed to send message to XPC client - {err}"
+                            );
+                        }
+                        return daemon;
                     }
                 },
-                // Show rules command
-                RuleAction::Show => {
-                    msg = daemon.engine.rules.jsonify_pretty();
+                CommandTypes::FileInfo => {
+                    if let Ok(cmd) = serde_json::from_str::<FileInfoCommand>(&payload.command) {
+                        let path = PathBuf::from(&cmd.path);
+                        if !path.exists() {
+                            eprintln!(
+                                "{SANTAD_NAME}:FileInfoHandler | File not found - {}", 
+                                cmd.path.display()
+                            )
+                        }
+                        let target = PolicyEnginePathTarget::FilePath(path);
+                        let answer = daemon.engine.analyze(&target).jsonify_pretty();
+                        let mut xclient = SantaXpcClient::new(XPC_CLIENT_PATH);
+                        if let Err(err) = xclient.send(answer.as_bytes()) {
+                            eprintln!(
+                                "{SANTAD_NAME}: Failed to send message to XPC client - {err}"
+                            );
+                        }
+                        return daemon
+                    }
+                },
+                CommandTypes::Status => {
+                    if let Ok(_) = serde_json::from_str::<StatusCommand>(&payload.command) {
+                        let status = daemon.engine.status().jsonify_pretty();
+                        let mut xclient = SantaXpcClient::new(XPC_CLIENT_PATH);
+                        if let Err(err) = xclient.send(status.as_bytes()) {
+                            eprintln!("{SANTAD_NAME}: Failed to send message to XPC client - {err}");
+                        }
+                    } 
                 },
             }
-            let mut xclient = SantaXpcClient::new(XPC_CLIENT_PATH);
-            if let Err(err) = xclient.send(msg.as_bytes()) {
-                eprintln!(
-                    "{SANTAD_NAME}: Failed to send message to XPC client - {err}"
-                );
-            }
-            return daemon
-        } 
-
-        if let Ok(cmd) = serde_json::from_str::<FileInfoCommand>(&data) {
-            let path = PathBuf::from(&cmd.path);
-            if !path.exists() {
-                eprintln!(
-                    "{SANTAD_NAME}:FileInfoHandler | File not found - {}", 
-                    cmd.path.display()
-                )
-            }
-            let target = PolicyEnginePathTarget::FilePath(path);
-            let answer = daemon.engine.analyze(&target).jsonify_pretty();
-            let mut xclient = SantaXpcClient::new(XPC_CLIENT_PATH);
-            if let Err(err) = xclient.send(answer.as_bytes()) {
-                eprintln!(
-                    "{SANTAD_NAME}: Failed to send message to XPC client - {err}"
-                );
-            }
-            return daemon
-        } 
-
-        if let Ok(_) = serde_json::from_str::<StatusCommand>(&data) {
-            let status = daemon.engine.status().jsonify_pretty();
-            let mut xclient = SantaXpcClient::new(XPC_CLIENT_PATH);
-            if let Err(err) = xclient.send(status.as_bytes()) {
-                eprintln!("{SANTAD_NAME}: Failed to send message to XPC client - {err}");
-            }
-
         } else {
             eprintln!("Invalid message format for : {}", data);
         }

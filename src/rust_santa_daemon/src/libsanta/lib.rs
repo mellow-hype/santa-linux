@@ -2,7 +2,6 @@ pub mod uxpc;
 pub mod commands;
 pub mod consts;
 pub mod engine_types;
-pub mod cache;
 
 use std::fmt;
 use serde::Serialize;
