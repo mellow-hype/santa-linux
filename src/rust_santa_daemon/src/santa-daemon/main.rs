@@ -5,22 +5,25 @@ mod engine;
 mod tracer;
 mod cache;
 
-use std::error::Error;
-use std::fs::OpenOptions;
-use std::path::{Path, PathBuf};
-use libsanta::commands::{SantaCtlCommand, CommandTypes};
-use nix::sys::wait::{WaitStatus, self};
+use std::{
+    error::Error,
+    fs::OpenOptions,
+    path::{PathBuf, Path}
+};
 
 use daemonize::Daemonize;
 use clap::Parser;
 use nix::unistd::Pid;
+use nix::sys::wait::{WaitStatus, self};
 
-use libsanta::{SantaMode, Loggable, LoggerSource, Jsonify};
 use libsanta::{
-    consts::{SANTAD_NAME, XPC_CLIENT_PATH},
+    {SantaMode, Loggable, LoggerSource, Jsonify},
     uxpc::SantaXpcClient,
+    consts::{SANTAD_NAME, XPC_CLIENT_PATH},
     engine_types::{PolicyDecision, PolicyEnginePathTarget},
     commands::{
+        SantaCtlCommand,
+        CommandTypes,
         RuleAction,
         RuleCommand,
         FileInfoCommand,
@@ -53,7 +56,7 @@ fn santactl_worker(mut daemon: SantaDaemon) -> SantaDaemon {
                         match cmd.action {
                             // Insert rules command
                             RuleAction::Insert => {
-                                let what_happened = daemon.engine.add_rule(&cmd.target, cmd.policy);
+                                let what_happened = daemon.engine.rules.add_rule(&cmd.target, cmd.policy);
                                 match cmd.target {
                                     RuleCommandInputType::Hash(hash) => {
                                         msg = format!(
@@ -72,7 +75,7 @@ fn santactl_worker(mut daemon: SantaDaemon) -> SantaDaemon {
                             // Remove rules command
                             RuleAction::Remove => {
                                 if let Some(what_happened) = 
-                                    daemon.engine.remove_rule(&cmd.target) {
+                                    daemon.engine.rules.remove_rule(&cmd.target) {
                                         match cmd.target {
                                             RuleCommandInputType::Hash(hash) => {
                                                 msg = format!(
@@ -122,7 +125,7 @@ fn santactl_worker(mut daemon: SantaDaemon) -> SantaDaemon {
                             )
                         }
                         let target = PolicyEnginePathTarget::FilePath(path);
-                        let answer = daemon.engine.analyze(&target).jsonify_pretty();
+                        let answer = daemon.check(&target).jsonify_pretty();
                         let mut xclient = SantaXpcClient::new(XPC_CLIENT_PATH);
                         if let Err(err) = xclient.send(answer.as_bytes()) {
                             eprintln!(
@@ -134,7 +137,7 @@ fn santactl_worker(mut daemon: SantaDaemon) -> SantaDaemon {
                 },
                 CommandTypes::Status => {
                     if let Ok(_) = serde_json::from_str::<StatusCommand>(&payload.command) {
-                        let status = daemon.engine.status().jsonify_pretty();
+                        let status = daemon.status().jsonify_pretty();
                         let mut xclient = SantaXpcClient::new(XPC_CLIENT_PATH);
                         if let Err(err) = xclient.send(status.as_bytes()) {
                             eprintln!("{SANTAD_NAME}: Failed to send message to XPC client - {err}");
@@ -183,7 +186,7 @@ fn netlink_worker(mut daemon: SantaDaemon) -> SantaDaemon {
                                         // println!("{SANTAD_NAME}: pid {pid} stopped with {}", sig);
                                         let target = PolicyEnginePathTarget::from(pid as u32);
                                         // get an answer
-                                        let answer = daemon.engine.analyze(&target);
+                                        let answer = daemon.check(&target);
                                         // log the answer
                                         answer.log(LoggerSource::SantaDaemon);
 
@@ -219,7 +222,7 @@ fn netlink_worker(mut daemon: SantaDaemon) -> SantaDaemon {
                                 // race the daemon for now
                                 eprintln!("{SANTAD_NAME}: {_e}");
                                 let target = PolicyEnginePathTarget::from(pid as u32);
-                                let answer = daemon.engine.analyze(&target);
+                                let answer = daemon.check(&target);
                                 // log the answer
                                 answer.log(LoggerSource::SantaDaemon);
                                 // kill the process if it should be blocked

@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use libsanta::{
     Jsonify,
     consts::{XPC_SOCKET_PATH, XPC_CLIENT_PATH},
-    engine_types::PolicyRule,
+    rules::RuleTypes,
     uxpc::{SantaXpcClient, SantaXpcServer},
     commands::{
         CommandTypes,
@@ -141,7 +141,7 @@ fn main() {
                         let rulecmd = RuleCommand {
                             action: RuleAction::Insert,
                             target: RuleCommandInputType::Path(p.clone()),
-                            policy: (if *allow {PolicyRule::Allow} else {PolicyRule::Block}),
+                            policy: (if *allow {RuleTypes::Allow} else {RuleTypes::Block}),
                         };
                         cmd = SantaCtlCommand {
                             ctype: CommandTypes::Rule,
@@ -151,7 +151,7 @@ fn main() {
                         let rulecmd = RuleCommand {
                             action: RuleAction::Insert,
                             target: RuleCommandInputType::Hash(h.clone()),
-                            policy: (if *allow {PolicyRule::Allow} else {PolicyRule::Block}),
+                            policy: (if *allow {RuleTypes::Allow} else {RuleTypes::Block}),
                             // policy: *rule,
                         };
                         cmd = SantaCtlCommand {
@@ -164,7 +164,7 @@ fn main() {
                 },
                 // Remove rule command
                 RuleSubCommands::Remove { hash } => {
-                    let rule = PolicyRule::Allow; // won't be used
+                    let rule = RuleTypes::Allow; // won't be used
                     let rulecmd = RuleCommand {
                         action: RuleAction::Remove,
                         target: RuleCommandInputType::Hash(String::from(hash)),
@@ -179,7 +179,7 @@ fn main() {
                     let rulecmd = RuleCommand {
                         action: RuleAction::Show,
                         target: RuleCommandInputType::Hash(String::from("")),
-                        policy: PolicyRule::Allow, // won't be used, but need a value
+                        policy: RuleTypes::Allow, // won't be used, but need a value
                     };
                     cmd = SantaCtlCommand {
                         ctype: CommandTypes::Rule,

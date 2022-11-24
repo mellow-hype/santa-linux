@@ -1,4 +1,4 @@
-use crate::engine_types::PolicyRule;
+use crate::rules::RuleTypes;
 use crate::Jsonify;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ pub enum RuleCommandInputType {
 pub struct RuleCommand {
     pub action: RuleAction,
     pub target: RuleCommandInputType,
-    pub policy: PolicyRule,
+    pub policy: RuleTypes,
 }
 impl Jsonify for RuleCommand {}
 

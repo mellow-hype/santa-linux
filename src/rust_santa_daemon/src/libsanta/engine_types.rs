@@ -1,11 +1,10 @@
 // std imports
-use std::fmt;
 use std::path::PathBuf;
-use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
 // local imports
 use crate::{SantaMode, Jsonify, Loggable, LoggerSource};
+use crate::rules::RuleTypes;
 
 /// HashState
 #[derive(Clone, Copy)]
@@ -15,28 +14,11 @@ pub enum HashState {
     HashUnknown,
 }
 /// Derive a HashState from a PolicyRule
-impl From<PolicyRule> for HashState {
-    fn from(s: PolicyRule) -> HashState {
+impl From<RuleTypes> for HashState {
+    fn from(s: RuleTypes) -> HashState {
         match s {
-            PolicyRule::Allow => HashState::HashOk,
-            PolicyRule::Block => HashState::HashBlock,
-        }
-    }
-}
-
-
-/// PolicyRule: an emum for the different type of rules that can exist
-#[derive(Deserialize, Serialize, Debug, Clone, Copy, ValueEnum)]
-pub enum PolicyRule {
-    Allow,
-    Block,
-}
-/// Display trait for PolicyRule
-impl fmt::Display for PolicyRule {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PolicyRule::Allow => write!(f, "ALLOW"),
-            PolicyRule::Block => write!(f, "BLOCK"),
+            RuleTypes::Allow => HashState::HashOk,
+            RuleTypes::Block => HashState::HashBlock,
         }
     }
 }
@@ -89,11 +71,11 @@ impl ToString for PolicyDecision {
     }
 }
 /// Derive a PolicyDecision from a PolicyRule
-impl From<PolicyRule> for PolicyDecision {
-    fn from(s: PolicyRule) -> PolicyDecision {
+impl From<RuleTypes> for PolicyDecision {
+    fn from(s: RuleTypes) -> PolicyDecision {
         match s {
-            PolicyRule::Allow => PolicyDecision::Allow,
-            PolicyRule::Block => PolicyDecision::Block,
+            RuleTypes::Allow => PolicyDecision::Allow,
+            RuleTypes::Block => PolicyDecision::Block,
         }
     }
 }
